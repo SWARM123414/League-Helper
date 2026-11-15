@@ -1,0 +1,34 @@
+/* Overlay: propositadamente simples (sem animações, sombras ou desfoque) para não pesar no jogo */
+html, body { margin: 0; background: transparent; overflow: hidden; }
+body { font: 12px/1.35 "Segoe UI", system-ui, sans-serif; color: #f0e6d2; user-select: none; }
+#ov { width: 372px; background: rgba(1, 10, 19, 0.86); border: 1px solid #785a28; border-radius: 6px; padding: 8px 10px; box-sizing: border-box; }
+.hd { display: flex; justify-content: space-between; align-items: center; color: #c8aa6e; font-weight: 700; letter-spacing: 2px; font-size: 11px; margin-bottom: 6px; }
+.hd small { color: #7b8a9a; font-weight: 400; letter-spacing: 0; }
+.sec { color: #c8aa6e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; margin: 8px 0 4px; }
+.items { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.items img { width: 28px; height: 28px; border-radius: 3px; border: 1px solid #463714; background: #000; }
+.items img.fm { border-color: #e84057; }
+.items .ar { color: #c8aa6e; }
+.skill { color: #0ac8b9; font-size: 11px; margin-top: 3px; }
+.en { display: grid; grid-template-columns: 30px 1fr auto; gap: 6px; align-items: center; padding: 4px 0; border-top: 1px solid #1e2d3d; }
+.en:first-of-type { border-top: none; }
+.en img { width: 30px; height: 30px; border-radius: 3px; border: 1px solid #463714; }
+.en.opp img { border-color: #e84057; }
+.en .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.en .nm b { color: #f0e6d2; }
+.en .nm small { color: #7b8a9a; }
+.en .st { text-align: right; font-size: 11px; white-space: nowrap; }
+.bd { display: inline-block; font-size: 9px; font-weight: 800; padding: 0 4px; border-radius: 2px; margin-right: 3px; text-transform: uppercase; }
+.bd.opp { background: #e84057; color: #fff; }
+.bd.dg { background: #8b0f22; color: #ffd2d8; }
+.bd.wk { background: #0f5136; color: #c9ffe6; }
+.bd.duo { background: #4a2a6b; color: #f0dcff; }
+.tg { color: #ff8a98; font-size: 10px; }
+.tg.g { color: #3ccf8e; }
+.ult { color: #8fd3ff; }
+.dead { color: #ff5b6e; font-weight: 700; }
+.tip { color: #cdbe91; font-size: 11px; margin: 2px 0; }
+.muted { color: #7b8a9a; }
+.t-IRON { color: #8c8c8c; } .t-BRONZE { color: #b07a52; } .t-SILVER { color: #a8b5c2; } .t-GOLD { color: #e1b84d; }
+.t-PLATINUM { color: #4fc3b5; } .t-EMERALD { color: #2fcf72; } .t-DIAMOND { color: #7aa4ff; } .t-MASTER { color: #c06bff; }
+.t-GRANDMASTER { color: #ff5c5c; } .t-CHALLENGER { color: #ffd76a; }

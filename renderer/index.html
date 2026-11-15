@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; connect-src https://ddragon.leagueoflegends.com; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>LoL Scout</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div>
+        <div class="brand-name">LOL SCOUT</div>
+        <div class="brand-sub" id="status"></div>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="match" class="active" data-i18n="tab.match">Partida</button>
+      <button data-tab="builds" data-i18n="tab.builds">Builds</button>
+      <button data-tab="history" data-i18n="tab.history">Histórico</button>
+      <button data-tab="notes" data-i18n="tab.notes">Notas</button>
+      <button data-tab="settings" data-i18n="tab.settings">Definições</button>
+    </nav>
+    <select id="lang-select" class="lang-select" title="Idioma / Language"></select>
+    <div class="me" id="me"></div>
+  </header>
+
+  <main>
+    <section id="tab-match" class="tab active"></section>
+    <section id="tab-builds" class="tab"></section>
+    <section id="tab-history" class="tab"></section>
+    <section id="tab-notes" class="tab"></section>
+    <section id="tab-settings" class="tab"></section>
+  </main>
+
+  <div class="modal hidden" id="modal">
+    <div class="modal-box">
+      <h3 id="modal-title">Nota</h3>
+      <textarea id="modal-text" maxlength="500" data-i18n-ph="modal.ph"></textarea>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn ghost" data-i18n="modal.cancel">Cancelar</button>
+        <button id="modal-save" class="btn" data-i18n="modal.save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="profile">
+    <div class="profile-box">
+      <button class="btn small ghost profile-close" id="profile-close" data-i18n="prof.close">Fechar</button>
+      <div id="profile-body"></div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+  <script src="builds.js"></script>
+</body>
+</html>
