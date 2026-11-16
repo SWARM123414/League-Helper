@@ -1,0 +1,41 @@
+{
+  "name": "lol-scout",
+  "productName": "LoL Scout",
+  "version": "1.1.0",
+  "description": "Mostra contra quem vais jogar no League of Legends: rank, winrate, duos, mains, tilt, smurfs, histórico e muito mais.",
+  "main": "main.js",
+  "author": "Alex",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "demo": "electron . --demo",
+    "test": "node test/analyzer.test.js",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.alex.lolscout",
+    "productName": "LoL Scout",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "build/icon.png"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LoL Scout"
+    }
+  }
+}
