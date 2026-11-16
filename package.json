@@ -1,41 +1,30 @@
 {
   "name": "lol-scout",
   "productName": "LoL Scout",
-  "version": "1.1.0",
-  "description": "Mostra contra quem vais jogar no League of Legends: rank, winrate, duos, mains, tilt, smurfs, histórico e muito mais.",
-  "main": "main.js",
-  "author": "Alex",
-  "license": "MIT",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LoL Scout (Tauri + TypeScript)",
   "scripts": {
-    "start": "electron .",
-    "demo": "electron . --demo",
-    "test": "node test/analyzer.test.js",
-    "dist": "electron-builder --win nsis --x64"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node test/analyzer.test.ts",
+    "tauri": "tauri",
+    "start": "tauri dev",
+    "demo": "tauri dev -- -- --demo",
+    "dist": "tauri build"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "@tauri-apps/cli": "^2.12.5",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
   },
-  "build": {
-    "appId": "com.alex.lolscout",
-    "productName": "LoL Scout",
-    "files": [
-      "main.js",
-      "preload.js",
-      "src/**/*",
-      "renderer/**/*",
-      "build/icon.png"
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "build/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "LoL Scout"
-    }
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
+    "@tauri-apps/plugin-global-shortcut": "^2.4.1",
+    "@tauri-apps/plugin-notification": "^2.8.1"
   }
 }

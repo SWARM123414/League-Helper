@@ -2,20 +2,19 @@
 <html lang="pt">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; connect-src https://ddragon.leagueoflegends.com; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>LoL Scout</title>
-  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">◆</div>
-      <div>
-        <div class="brand-name">LOL SCOUT</div>
-        <div class="brand-sub" id="status"></div>
+  <!-- A barra de cima é a barra da janela: arrasta-se por ela e tem os botões da janela à direita -->
+  <header class="topbar" data-tauri-drag-region>
+    <div class="brand" data-tauri-drag-region>
+      <div class="logo"><span>◆</span></div>
+      <div data-tauri-drag-region>
+        <div class="brand-name" data-tauri-drag-region>LOL SCOUT</div>
+        <div class="brand-sub" id="status" data-tauri-drag-region></div>
       </div>
     </div>
-    <nav class="tabs" id="tabs">
+    <nav class="tabs" id="tabs" data-tauri-drag-region>
       <button data-tab="match" class="active" data-i18n="tab.match">Partida</button>
       <button data-tab="builds" data-i18n="tab.builds">Builds</button>
       <button data-tab="history" data-i18n="tab.history">Histórico</button>
@@ -23,7 +22,19 @@
       <button data-tab="settings" data-i18n="tab.settings">Definições</button>
     </nav>
     <select id="lang-select" class="lang-select" title="Idioma / Language"></select>
-    <div class="me" id="me"></div>
+    <div class="me" id="me" data-tauri-drag-region></div>
+    <div class="winctl">
+      <button id="win-min" class="wc" aria-label="Minimizar" title="Minimizar">
+        <svg viewBox="0 0 10 10"><path d="M1.5 5.5h7" /></svg>
+      </button>
+      <button id="win-max" class="wc" aria-label="Maximizar" title="Maximizar">
+        <svg class="i-max" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" /></svg>
+        <svg class="i-restore" viewBox="0 0 10 10"><path d="M3 3V1.5h5.5V7H7" /><rect x="1.5" y="3" width="5.5" height="5.5" /></svg>
+      </button>
+      <button id="win-close" class="wc close" aria-label="Fechar" title="Fechar">
+        <svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" /></svg>
+      </button>
+    </div>
   </header>
 
   <main>
@@ -53,8 +64,6 @@
   </div>
 
   <div class="toast hidden" id="toast"></div>
-  <script src="i18n.js"></script>
-  <script src="app.js"></script>
-  <script src="builds.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

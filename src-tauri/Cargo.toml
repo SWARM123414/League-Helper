@@ -1,0 +1,36 @@
+[package]
+name = "lol-scout"
+version = "2.0.0"
+description = "LoL Scout"
+edition = "2021"
+
+[lib]
+name = "lol_scout_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
+tauri = { version = "2.12.6", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-clipboard-manager = "2.5.0"
+tauri-plugin-global-shortcut = "2.4.1"
+tauri-plugin-notification = "2.8.1"
+tauri-plugin-single-instance = "2.5.5"
+tokio = { version = "1.54.1", features = ["time"] }
+
+[build-dependencies]
+tauri-build = { version = "2.7.5", features = [] }
+
+[target."cfg(windows)".dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

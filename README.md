@@ -1,135 +1,73 @@
 # LoL Scout
 
-App para Windows que mostra **contra quem vais jogar** no League of Legends, e tudo sobre cada jogador.
+A Windows app that shows **who you're up against** in League of Legends, and everything about each player. Built with **Tauri 2 (Rust) + TypeScript**.
 
-## O que faz
+## What it does
 
-**Idiomas:** Português, English, Español e Français. Muda-se no seletor do topo da janela ou nas Definições. Os nomes dos campeões, habilidades, itens e runas também mudam. Na primeira vez a app escolhe o idioma do Windows.
+- **Champion select:** enemy picks and bans, champion info (abilities, how to play against them, likely high-elo build), your rank and experience on your pick, optional auto-accept.
+- **When the game loads (all 10 players):** your lane opponent, the most dangerous enemy and the weakest link, duos and premades, ranks/LP/winrate, recent form, champion experience, automatic tags (one-trick, main, first time?, possible smurf, tilt…), players you've met before, and your notes on them. Live KDA, CS, level, items and respawn timers during the game.
+- **Builds** computed from the ranked games of the best players in your region (Challenger/Grandmaster/Master), collected through your own client: items in buy order, boots, runes, summoner spells and skill order, per champion and role (plus ARAM and Arena). **One-click import** into the client.
+- **Build against your opponent:** armor/MR, anti-heal, penetration and boots adjusted to your lane opponent and the enemy team, with the reason for each item.
+- **In-game overlay** with your build, the 5 enemies, ultimate cooldowns and tips. Clicks pass through to the game and it never steals focus. Toggle with **Ctrl+Shift+Z** (configurable). Needs the game in Borderless or Windowed mode.
+- History, player profiles, notes. Interface in Português, English, Español and Français.
+- A custom window frame in the style of the League client (the top bar is the title bar, with gold minimise/maximise/close buttons).
 
-**Na seleção de campeões**
-- Os picks e bans inimigos; clica em "Info do campeão" para veres as habilidades, como jogar contra, a build provável e o teu histórico contra ele
-- O teu rank e a tua experiência no campeão que escolheste
-- Aceita a partida automaticamente (opcional)
+## Why Rust + Tauri (instead of Electron)
 
-**Quando o jogo carrega (os 10 jogadores)**
-- 🎯 **Quem vai contra ti** na lane, em destaque
-- ☠ **O inimigo mais perigoso** e 🎯 **o elo mais fraco** (bom alvo para focar)
-- ⚠ **Duos e premades** na equipa inimiga e na tua
-- Rank (Solo/Duo e Flex), LP, winrate da season, nível
-- Forma nos últimos 20 jogos (vitórias/derrotas), KDA, sequência
-- Experiência no campeão que estão a jogar: número de jogos, winrate e KDA
-- Etiquetas automáticas: **One-trick**, **Main**, **Primeira vez?**, **Possível smurf**, **Tilt**, **Em forma**, **Má fase**, **Morre muito**, **Winrate alta**…
-- Os 3 campeões mais jogados de cada um
-- Média de rank de cada equipa
-- **Já te cruzaste com este jogador?** Mostra quantas vezes e o resultado (contigo / contra ti)
-- **Notas** sobre jogadores ("tóxico", "joga muito bem de Lee Sin"…), que aparecem quando o voltares a encontrar
-- Ao vivo durante o jogo: KDA, CS, nível, itens e tempo de respawn
-- Notificação do Windows quando o jogo começa, com o resumo do que importa
-- **Perfil de cada jogador dentro da app**: ranks, últimos jogos (cada um abre com os 10 jogadores), campeões e posição principal
-- **O teu histórico contra cada campeão inimigo**: na equipa inimiga, na tua lane, e na lane com o teu campeão atual
-- **Build provável do inimigo** (alto elo) e as habilidades com cooldowns, sem sair da app
+This app spends most of its life sitting in the tray waiting for League to open, often while you're playing. So the goal was to use as few resources as possible. The previous version was Electron. Measured on the same PC, both apps hidden in the tray and waiting for the League client:
 
-**Builds (separador Builds e automaticamente na seleção de campeões)**
-- Calculadas a partir dos jogos de ranqueada dos **melhores jogadores da tua região** (Challenger, Grão-Mestre, Mestre), recolhidos pelo teu próprio cliente uma vez por dia
-- Por campeão e por posição: itens iniciais, itens principais **pela ordem em que são comprados**, botas, itens situacionais, runas completas (incluindo fragmentos), feitiços e **ordem das habilidades** nível a nível
-- Percentagem de uso e de vitórias de cada escolha
-- **Importar para o LoL com um clique**: cria a página de runas e o conjunto de itens na loja do jogo (ou faz isso sozinho quando confirmas o campeão, se ativares nas Definições)
+| | Electron (old) | Tauri (this version) |
+|---|---|---|
+| Installer | 78 MB | **1.5 MB** |
+| Memory (private) | 95 MB | **40 MB** |
+| CPU (share of one core) | ~17% | **under 1%** |
+| Processes started while idle | one every 2 seconds | none |
 
-**Build recomendada contra o teu adversário**
-- Durante o jogo, a tua build é ajustada ao adversário da tua lane e à equipa inimiga: armadura ou resistência mágica conforme o dano dele, antecura contra quem se cura, penetração contra tanques, as botas certas e Escudo de Doran se fores corpo-a-corpo contra alguém à distância no topo
-- Só escolhe itens que os jogadores de alto elo fazem com o teu campeão, e explica o porquê de cada um
-- Na seleção de campeões a app adivinha o teu provável adversário pela posição habitual de cada pick inimigo
-- O botão de importar (e a importação automática) mete esta build no cliente, com um bloco "Para esta partida"
+The reasons:
 
-**Overlay dentro do jogo**
-- Uma janela pequena por cima do jogo com a tua build contra o adversário, os 5 inimigos (rank, etiquetas, quem é o mais perigoso, duos, KDA, cooldown da ultimate, tempo de respawn) e as dicas da partida
-- Aparece sozinho durante 20 segundos quando o jogo começa e depois mostra/esconde com **Ctrl+Shift+Z** (dá para mudar)
-- Os cliques passam através dele para o jogo e não rouba o foco
-- **Quase sem custo de FPS:** escondido não faz nada; visível é uma imagem parada sem animações, atualizada no máximo a cada 3 segundos
-- Precisa do jogo em modo **"Sem bordas"** (Borderless) ou janela: em ecrã inteiro exclusivo o Windows não deixa nada aparecer por cima
+- **No bundled browser.** Electron ships its own copy of Chromium (that's most of the 78 MB and a lot of the memory). Tauri uses **WebView2**, which is already part of Windows 10/11, so the app itself is a ~4 MB executable.
+- **Finding the League client without PowerShell.** The Electron version started a PowerShell process every 2 seconds to read the client's command line, which cost about 15% of a CPU core all day. The Rust side reads the process list directly (and only every 5 seconds while League is closed).
+- **Nothing is drawn when you can't see it.** When the window goes to the tray or is minimised, WebView2 is told to stop rendering and to drop memory. The overlay window only exists during a game.
+- **Rust only where it matters.** The native side is small: HTTPS to the League client on `127.0.0.1` (Riot's self-signed certificate is accepted only for local connections), the process lookup, data files, windows, tray, hotkey and start-with-Windows. Everything else (tracker, player analysis, builds, interface) is **TypeScript**, so the logic stays easy to change and is tested without needing League open.
+- **Why not C# or a fully native Rust UI?** They would save a little more memory, but meant rewriting the whole interface. Tauri kept the existing HTML/CSS interface and got most of the gain.
 
-**Mais informações na partida**
-- Barra de dano físico/mágico de cada equipa e **dicas de itens** para essa partida (armadura ou resistência mágica, antecura contra quem cura, penetração contra tanques, sentinelas contra invisíveis, tenacidade contra muito controlo)
-- "Info do campeão" em cada jogador: passiva e habilidades com **cooldowns**, dicas de como jogar contra ele, e **os itens que esse jogador costuma fazer** com aquele campeão
-- A tua build sempre à mão durante o jogo
+## Running and building
 
-**Histórico**
-- Winrate, KDA médio, sequência atual e os teus melhores campeões
-- Os teus últimos jogos; clica num para veres os 10 jogadores, dano, ouro, visão e itens
-
-## Criar o instalador .exe
-
-Precisas do **Node.js** (versão 18 ou superior): https://nodejs.org (instala a versão "LTS").
-
-1. Extrai o zip para uma pasta, por exemplo `C:\lol-scout`
-2. Abre essa pasta, clica na barra de endereço, escreve `cmd` e carrega em Enter
-3. Corre:
+You need **Node.js** 18+ and **Rust** (with the "Desktop development with C++" tools from Visual Studio).
 
 ```
 npm install
-npm run dist
+npm test          # engine tests (no League client needed)
+npm start         # dev build connected to your League client
+npm run demo      # dev build with a simulated match
+npm run dist      # installer -> src-tauri/target/release/bundle/nsis/
 ```
 
-> Se aparecer o erro "running scripts is disabled on this system", estás no PowerShell: usa `npm.cmd install` e `npm.cmd run dist`, ou escreve primeiro `cmd` e carrega em Enter.
+The installed app also accepts `--demo` (simulated match) and `--hidden` (start in the tray).
 
-4. O instalador fica em `dist\LoL Scout Setup 1.0.0.exe`. Faz duplo clique para instalar. Cria um atalho no Ambiente de Trabalho.
+## Notes
 
-> O Windows pode mostrar "O Windows protegeu o seu PC" porque o instalador não está assinado. Clica em **Mais informações → Executar mesmo assim**.
+- **In ranked, Riot hides names during champion select.** Names, ranks and duos appear as soon as the game starts loading.
+- The app only reads your client's local API (the same one Porofessor, Blitz and U.GG use). It doesn't touch game files or the game itself.
+- Your data (notes, players met, settings, builds) stays on your PC in `%APPDATA%\com.lolscout.app\`. On first run it's copied over from the old Electron version (`%APPDATA%\LoL Scout\`).
+- Icons and champion data come from Riot's Data Dragon and CommunityDragon (cached after the first download).
+- If the app stays on "searching for the client", set the League install folder in **Settings**. If something breaks, use **Settings → Diagnostics** to test the connection and copy the log.
 
-## Testar sem compilar
-
-```
-npm install
-npm start       # liga-se ao teu cliente do LoL
-npm run demo    # simula uma partida, para veres como fica sem estar a jogar
-npm test        # testes da lógica
-```
-
-## Como usar
-
-1. Abre o LoL Scout (pode ser antes ou depois do cliente do League)
-2. Faz login no League. Fica "Ligado" no canto superior esquerdo
-3. Entra na fila. Na seleção de campeões vês os picks inimigos; quando o jogo carrega, vês os 10 jogadores
-
-Se a app ficar sempre em "À procura do cliente", vai a **Definições** e indica a pasta onde o League está instalado (ex.: `D:\Riot Games\League of Legends`).
-
-## Notas
-
-- **Em ranked, a Riot esconde os nomes durante a seleção de campeões.** É uma regra da Riot e a app respeita-a. Os nomes, ranks e duos aparecem todos assim que o jogo começa a carregar (no ecrã de loading), tal como no Porofessor.
-- A app só lê a API local do teu cliente (a mesma que o Porofessor, Blitz, U.GG e afins usam). Não mexe nos ficheiros do jogo nem no jogo em si.
-- Os teus dados (notas, jogadores encontrados, definições) ficam só no teu PC, em `%APPDATA%\LoL Scout\lol-scout-data.json`.
-- Os ícones e os dados dos campeões vêm da Data Dragon e da CommunityDragon da Riot, por isso precisam de internet (ficam em cache depois).
-- As builds começam a ser recolhidas quando abres a app com o cliente do LoL ligado. Na primeira vez demora uns minutos até haver dados para a maioria dos campeões. Campeões pouco jogados em alto elo podem ter poucos jogos.
-- A app nunca abre links nem o browser: tudo é mostrado dentro dela.
-- Para a importação de runas precisas de uma página de runas livre (ou de uma chamada "LoL Scout…", que a app substitui).
-
-## Se algo não funcionar
-
-Vai a **Definições → Diagnóstico**, carrega em **Testar ligação ao LoL** e depois em **Copiar diagnóstico e registo**. Cola o texto na conversa e eu corrijo. O registo também fica em `%APPDATA%\LoL Scout\lol-scout.log`.
-
-## Desempenho
-
-- Com a janela da app minimizada ou escondida, ela não desenha nada.
-- **Modo leve** (Definições): a app deixa de usar a placa gráfica, que fica toda para o jogo.
-- **Fechar para junto do relógio** e **Arrancar com o Windows**: a app fica escondida e só aparece quando precisas.
-- As builds são separadas por **patch**. Quando há poucos jogos no patch atual, junta os patches anteriores com menos peso e avisa quando a amostra é pequena. Também há builds de **ARAM** e **Arena**.
-
-## Estrutura
+## Structure
 
 ```
-main.js            janela do Electron e ligação entre as partes
-preload.js         ponte segura entre a interface e o processo principal
-src/lcu.js         encontra o cliente do LoL (lockfile / processo) e faz os pedidos
-src/tracker.js     segue a fase (fila, seleção, jogo, fim) e monta os dados
-src/analyzer.js    análise: rank, winrate, mains, smurfs, tilt, duos, ameaça
-src/builds.js      builds de alto elo: recolha, agregação, timelines, importação para o cliente
-src/gamedata.js    campeões, habilidades, itens e runas (Data Dragon) + dicas da partida
-src/store.js       guarda notas, encontros e definições
-src/demo.js        cliente falso para o modo demo
-src/demo-static.js dados mínimos para o demo funcionar sem internet
-renderer/overlay.* overlay dentro do jogo
-src/log.js         registo de erros
-renderer/i18n.js   traduções (PT, EN, ES, FR); para acrescentar um idioma, copia um bloco e traduz
-renderer/          interface (HTML, CSS, JS)
-test/              testes
+src/core/        engine (TypeScript, no Tauri/Node dependencies)
+  lcu.ts           finds the League client and talks to its API
+  tracker.ts       follows the phase (queue, champ select, game, end) and builds the state
+  analyzer.ts      rank, winrate, mains, smurfs, tilt, duos, threat
+  builds.ts        high-elo builds: collection, aggregation, timelines, import into the client
+  gamedata.ts      champions, abilities, items, runes (Data Dragon) + match tips
+  store.ts         notes, encounters, settings
+  i18n.ts          translations (PT, EN, ES, FR)
+  demo*.ts         fake client for demo mode
+src/app/         connects the engine to Tauri (tray, overlay, hotkey, notifications, the UI's api)
+src/ui/          interface, window frame and overlay styles
+src/overlay.ts   in-game overlay
+src-tauri/       native side (Rust): src/lib.rs, tauri.conf.json, capabilities
+test/            engine tests (node test/analyzer.test.ts)
 ```

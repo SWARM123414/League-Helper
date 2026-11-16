@@ -2,47 +2,52 @@
 // região, recolhidos pelo próprio cliente do LoL. Calcula runas, itens, botas, feitiços,
 // itens iniciais, ordem de itens e ordem de habilidades por campeão e posição.
 
-const fs = require('fs');
-const path = require('path');
-const { EventEmitter } = require('events');
-const crypto = require('crypto');
-const A = require('./analyzer');
-const log = require('./log');
+import * as A from './analyzer.ts';
+import type { Game } from './analyzer.ts';
+import { Emitter } from './emitter.ts';
+import type { GameData, Composition } from './gamedata.ts';
+import type { LcuLike } from './lcu.ts';
+import * as log from './log.ts';
+import { platform, sleep } from './platform.ts';
 
+const FILE = 'lol-scout-builds.json';
 const RANKED_SOLO = 420;
 const STALE_MS = 20 * 60 * 60 * 1000;     // recolher de novo ao fim de 20 h
 const DETAILS_MS = 24 * 60 * 60 * 1000;
 const MIN_ROLE_GAMES = 8;
 const TRINKETS = new Set([3340, 3363, 3364, 3330]);
-const KEYS = { 1: 'Q', 2: 'W', 3: 'E', 4: 'R' };
+const KEYS: Record<number, string> = { 1: 'Q', 2: 'W', 3: 'E', 4: 'R' };
 const ROLES = ['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY'];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function bump(obj, key, win) {
-  const e = obj[key] || (obj[key] = [0, 0]);
-  e[0]++; if (win) e[1]++;
-}
-function mode(list) {
-  const c = {};
-  for (const x of list) if (x !== null && x !== undefined && x !== '') c[x] = (c[x] || 0) + 1;
-  const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
-  return best ? { value: best[0], n: best[1] } : null;
-}
-const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 const ENOUGH_GAMES = 40;
 const SMALL_SAMPLE = 20;
 
+type Counter = Record<string, [number, number]>; // chave -> [jogos, vitórias]
+interface Bucket { n: number; w: number; items: Counter; boots: Counter; pages: Counter; spells: Counter; refs: { g: number; p: string; w: number; t: number }[] }
+type ChampAgg = Record<string, Bucket>;
+
+function bump(obj: Counter, key: string | number, win: boolean): void {
+  const e = obj[key] || (obj[key] = [0, 0]);
+  e[0]++; if (win) e[1]++;
+}
+function mode<T>(list: T[]): { value: string; n: number } | null {
+  const c: Record<string, number> = {};
+  for (const x of list) if (x !== null && x !== undefined && (x as unknown) !== '') c[String(x)] = (c[String(x)] || 0) + 1;
+  const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+  return best ? { value: best[0], n: best[1] } : null;
+}
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
+
 // moda com pesos: [[valor, peso], ...]
-function wmode(pairs) {
-  const c = {};
-  for (const [v, w] of pairs) if (v !== null && v !== undefined && v !== '' && !Number.isNaN(v)) c[v] = (c[v] || 0) + w;
+function wmode(pairs: [unknown, number][]): string | null {
+  const c: Record<string, number> = {};
+  for (const [v, w] of pairs) if (v !== null && v !== undefined && v !== '' && !Number.isNaN(v)) c[String(v)] = (c[String(v)] || 0) + w;
   const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
   return best ? best[0] : null;
 }
-function emptyBucket() { return { n: 0, w: 0, items: {}, boots: {}, pages: {}, spells: {}, refs: [] }; }
-function addInto(t, s, k) {
+function emptyBucket(): Bucket { return { n: 0, w: 0, items: {}, boots: {}, pages: {}, spells: {}, refs: [] }; }
+function addInto(t: Bucket, s: Bucket, k: number): void {
   t.n += s.n * k; t.w += s.w * k;
-  for (const f of ['items', 'boots', 'pages', 'spells']) {
+  for (const f of ['items', 'boots', 'pages', 'spells'] as const) {
     for (const [key, [n, w]] of Object.entries(s[f] || {})) {
       const e = t[f][key] || (t[f][key] = [0, 0]);
       e[0] += n * k; e[1] += w * k;
@@ -51,57 +56,79 @@ function addInto(t, s, k) {
   t.refs = [...t.refs, ...(s.refs || [])].sort((a, b) => b.t - a.t).slice(0, 30);
 }
 
-class BuildDB extends EventEmitter {
-  constructor({ lcu, gamedata, dir }) {
+export interface BuildStatus { running: boolean; done: number; total: number; games: number; players: number; error: string | null }
+
+export interface MatchupCtx {
+  enemyComp: Composition | null;
+  opp: { championId: number; name: string; damageType: string | null; ranged: boolean | null } | null;
+  meRanged: boolean | null;
+}
+
+export class BuildDB extends Emitter {
+  lcu: LcuLike;
+  gd: GameData;
+  persist: boolean;
+  data: { v: number; region: string | null; updated: number; fetched: Record<string, number>; patches: Record<string, Record<string, ChampAgg>>; details: Record<string, any> };
+  seen: Set<string> = new Set();
+  status: BuildStatus = { running: false, done: 0, total: 0, games: 0, players: 0, error: null };
+  shouldPause: () => boolean = () => false;
+  private merged: Map<number, any> = new Map();
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor({ lcu, gamedata, persist = false }: { lcu: LcuLike; gamedata: GameData; persist?: boolean }) {
     super();
     this.lcu = lcu;
     this.gd = gamedata;
-    this.file = dir ? path.join(dir, 'lol-scout-builds.json') : null;
+    this.persist = persist;
     this.data = { v: 2, region: null, updated: 0, fetched: {}, patches: {}, details: {} };
-    this.seen = new Set();
-    this.status = { running: false, done: 0, total: 0, games: 0, players: 0, error: null };
-    this.shouldPause = () => false;
-    this._merged = new Map();
-    this.load();
   }
 
-  load() {
-    if (!this.file) return;
-    try {
-      const d = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      if (d && d.v === 2) {
-        this.data = { ...this.data, ...d };
-        this.seen = new Set(d.seen || []);
-      }
-    } catch { /* primeira vez ou formato antigo: recolhe de novo */ }
-    this.status.games = this.countGames();
-  }
-
-  save() {
-    if (!this.file) return;
-    clearTimeout(this._t);
-    this._t = setTimeout(() => {
+  async load(): Promise<this> {
+    if (this.persist) {
       try {
-        const seen = [...this.seen].slice(-60000);
-        fs.writeFileSync(this.file, JSON.stringify({ ...this.data, seen }));
-      } catch (e) { log.error('builds', `erro a guardar: ${e.message}`); }
-    }, 500);
+        const text = await platform().readData(FILE);
+        const d = text ? JSON.parse(text) : null;
+        if (d && d.v === 2) {
+          this.data = { ...this.data, ...d };
+          delete (this.data as any).seen;
+          this.seen = new Set(d.seen || []);
+        }
+      } catch { /* primeira vez ou formato antigo: recolhe de novo */ }
+    }
+    this.status.games = this.countGames();
+    return this;
+  }
+
+  save(): void {
+    if (!this.persist) return;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => { this.flush(); }, 500);
+  }
+
+  async flush(): Promise<void> {
+    if (!this.persist || !this.saveTimer) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    try {
+      const seen = [...this.seen].slice(-60000);
+      await platform().writeData(FILE, JSON.stringify({ ...this.data, seen }));
+    } catch (e) { log.error('builds', `erro a guardar: ${(e as Error).message || e}`); }
   }
 
   // ---------- patches ----------
   // ordena "14.23" > "14.9" > "unknown"
-  patchList() {
-    const v = (p) => (p === 'unknown' ? [-1, -1] : p.split('.').map(Number));
+  patchList(): string[] {
+    const v = (p: string) => (p === 'unknown' ? [-1, -1] : p.split('.').map(Number));
     return Object.keys(this.data.patches).sort((a, b) => { const [a1, a2] = v(a); const [b1, b2] = v(b); return b1 - a1 || b2 - a2; });
   }
-  currentPatch() { return this.patchList()[0] || null; }
+  currentPatch(): string | null { return this.patchList()[0] || null; }
 
-  prunePatches(keep = 3) {
+  prunePatches(keep = 3): void {
     const list = this.patchList();
     for (const p of list.slice(keep)) delete this.data.patches[p];
   }
 
-  countGames() {
+  countGames(): number {
     let n = 0;
     for (const agg of Object.values(this.data.patches)) {
       for (const roles of Object.values(agg)) for (const k of ['ALL', 'ARAM', 'ARENA']) if (roles[k]) n += roles[k].n;
@@ -109,19 +136,19 @@ class BuildDB extends EventEmitter {
     return n;
   }
 
-  champIds() {
-    const ids = new Set();
+  champIds(): Set<number> {
+    const ids = new Set<number>();
     for (const agg of Object.values(this.data.patches)) for (const id of Object.keys(agg)) ids.add(Number(id));
     return ids;
   }
-  hasChamp(id) { return this.champIds().has(Number(id)); }
+  hasChamp(id: number): boolean { return this.champIds().has(Number(id)); }
 
-  isStale() { return !this.data.updated || Date.now() - this.data.updated > STALE_MS || this.countGames() < 200; }
+  isStale(): boolean { return !this.data.updated || Date.now() - this.data.updated > STALE_MS || this.countGames() < 200; }
 
   // ---------- agregação ----------
-  addGame(puuid, g) {
+  addGame(puuid: string, g: Game): boolean {
     if (g.remake || !g.championId) return false;
-    let roles;
+    let roles: string[];
     if (g.queueId === RANKED_SOLO) roles = [A.roleOf(g) || 'NONE', 'ALL'];
     else if (g.queueId === 450) roles = ['ARAM'];
     else if (g.queueId === 1700 || g.queueId === 1710) roles = ['ARENA'];
@@ -135,7 +162,7 @@ class BuildDB extends EventEmitter {
     const champ = (agg[g.championId] = agg[g.championId] || {});
     const items = [...new Set(g.items)];
     for (const r of roles) {
-      const b = champ[r] || (champ[r] = { n: 0, w: 0, items: {}, boots: {}, pages: {}, spells: {}, refs: [] });
+      const b = champ[r] || (champ[r] = emptyBucket());
       b.n++; if (g.win) b.w++;
       for (const id of items) {
         if (TRINKETS.has(id)) continue;
@@ -149,17 +176,17 @@ class BuildDB extends EventEmitter {
       b.refs.unshift({ g: g.gameId, p: puuid, w: g.win ? 1 : 0, t: g.date });
       if (b.refs.length > 30) b.refs.length = 30;
     }
-    this._merged.clear();
+    this.merged.clear();
     return true;
   }
 
   // Junta o patch atual com os anteriores (com menos peso) até haver jogos suficientes
-  mergedChamp(champId) {
-    const cached = this._merged.get(champId);
+  mergedChamp(champId: number): { roles: Record<string, Bucket>; used: { patch: string; games: number; weight: number }[]; current: string | null } {
+    const cached = this.merged.get(champId);
     if (cached) return cached;
     const patches = this.patchList();
-    const out = {};
-    const used = [];
+    const out: Record<string, Bucket> = {};
+    const used: { patch: string; games: number; weight: number }[] = [];
     let weight = 1;
     for (let i = 0; i < patches.length; i++) {
       const c = this.data.patches[patches[i]][champId];
@@ -168,16 +195,15 @@ class BuildDB extends EventEmitter {
         for (const [role, b] of Object.entries(c)) addInto(out[role] || (out[role] = emptyBucket()), b, weight);
       }
       const total = (out.ALL && out.ALL.n) || 0;
-      if (i === 0 && total >= ENOUGH_GAMES) break;
-      if (i > 0 && total >= ENOUGH_GAMES) break;
+      if (total >= ENOUGH_GAMES) break;
       weight /= 2;
     }
     const res = { roles: out, used, current: patches[0] || null };
-    this._merged.set(champId, res);
+    this.merged.set(champId, res);
     return res;
   }
 
-  bucket(champId, role) {
+  bucket(champId: number, role: string | null): { b: Bucket | null; role: string | null } {
     const { roles: c } = this.mergedChamp(champId);
     if (!c || !Object.keys(c).length) return { b: null, role: null };
     if (role === 'ARAM' || role === 'ARENA') return { b: c[role] || null, role };
@@ -190,12 +216,12 @@ class BuildDB extends EventEmitter {
     return r ? { b: c[r], role: r } : { b: c.ALL || null, role: 'ALL' };
   }
 
-  rolesFor(champId) {
+  rolesFor(champId: number): { role: string; games: number }[] {
     const { roles: c } = this.mergedChamp(champId);
     return [...ROLES, 'ARAM', 'ARENA'].filter((r) => c[r]).map((r) => ({ role: r, games: Math.round(c[r].n) })).sort((a, b) => b.games - a.games);
   }
 
-  runePage(b) {
+  runePage(b: Bucket) {
     const pages = Object.entries(b.pages).map(([k, [n, w]]) => {
       const [p, s, perks, shards] = k.split('|');
       return { primary: Number(p), sub: Number(s), perks: perks.split(',').map(Number), shards: shards ? shards.split(',').map(Number) : [], n, w };
@@ -219,12 +245,12 @@ class BuildDB extends EventEmitter {
     return { primary, sub, perks: [...perks, ...pair], shards, keystonePick: pct(kn, total), keystoneWr: pct(kw, kn) };
   }
 
-  getBuild(champId, role) {
-    champId = Number(champId);
+  getBuild(champIdIn: number | string, role: string | null): any {
+    const champId = Number(champIdIn);
     const { b, role: usedRole } = this.bucket(champId, role);
     if (!b || !b.n) return null;
     const gd = this.gd;
-    const list = (obj) => Object.entries(obj).map(([id, [n, w]]) => ({ id: Number(id), name: gd.itemName(Number(id)), icon: gd.itemIcon(Number(id)), pick: pct(n, b.n), wr: pct(w, n), n: Math.round(n * 10) / 10 }))
+    const list = (obj: Counter) => Object.entries(obj).map(([id, [n, w]]) => ({ id: Number(id), name: gd.itemName(Number(id)), icon: gd.itemIcon(Number(id)), pick: pct(n, b.n), wr: pct(w, n), n: Math.round(n * 10) / 10 }))
       .sort((x, y) => y.n - x.n);
     const items = list(b.items).filter((x) => x.n >= 1.5 || b.n < 10);
     const boots = list(b.boots).slice(0, 2);
@@ -235,7 +261,7 @@ class BuildDB extends EventEmitter {
     let core = items.slice(0, 3);
     if (det && det.order && det.order.length) {
       // ordenar o core pela ordem real de compra
-      const ord = det.order;
+      const ord: number[] = det.order;
       core = [...core].sort((x, y) => (ord.indexOf(x.id) < 0 ? 9 : ord.indexOf(x.id)) - (ord.indexOf(y.id) < 0 ? 9 : ord.indexOf(y.id)));
     }
     const c = gd.champ(champId);
@@ -262,7 +288,7 @@ class BuildDB extends EventEmitter {
       } : null,
       spells,
       details: det && det.at && Date.now() - det.at < DETAILS_MS * 7 ? {
-        starting: (det.starting || []).map((id) => ({ id, name: gd.itemName(id), icon: gd.itemIcon(id) })),
+        starting: (det.starting || []).map((id: number) => ({ id, name: gd.itemName(id), icon: gd.itemIcon(id) })),
         skillOrder: det.skillOrder || null,
         skillSeq: det.skillSeq || [],
         sample: det.sample || 0
@@ -273,21 +299,20 @@ class BuildDB extends EventEmitter {
   }
 
   // ---------- build contra o adversário desta partida ----------
-  // ctx = { enemyComp, opp: { championId, name, damageType, ranged }, meRanged }
-  matchupBuild(base, ctx) {
+  matchupBuild(base: any, ctx: MatchupCtx | null): any {
     if (!base || !ctx) return base;
     const { b } = this.bucket(base.championId, base.requestedRole);
     if (!b) return base;
     const gd = this.gd;
     const comp = ctx.enemyComp || null;
     const opp = ctx.opp || null;
-    const coreIds = new Set(base.core.map((x) => x.id));
+    const coreIds = new Set(base.core.map((x: any) => x.id));
     const minN = Math.max(2, Math.round(b.n * 0.03));
     const pool = Object.entries(b.items).map(([id, [n, w]]) => ({ id: Number(id), n, w }))
       .filter((x) => !coreIds.has(x.id) && (x.n >= minN || b.n < 15));
     const scored = pool.map((x) => {
       let score = pct(x.n, b.n) * 0.3;
-      const why = [];
+      const why: { key: string; p?: Record<string, any> }[] = [];
       const armor = gd.itemHas(x.id, 'Armor');
       const mr = gd.itemHas(x.id, 'SpellBlock');
       if (comp && comp.adPct >= 60 && armor) { score += 40; why.push({ key: 'why.armor', p: { pct: comp.adPct } }); }
@@ -299,7 +324,7 @@ class BuildDB extends EventEmitter {
       if (!why.length) why.push({ key: 'why.popular' });
       return { ...x, score, why };
     }).sort((x, y) => y.score - x.score);
-    const item = (x) => ({ id: x.id, name: gd.itemName(x.id), icon: gd.itemIcon(x.id), pick: pct(x.n, b.n), wr: pct(x.w, x.n), n: x.n, why: x.why });
+    const item = (x: { id: number; n: number; w: number; why: any[] }) => ({ id: x.id, name: gd.itemName(x.id), icon: gd.itemIcon(x.id), pick: pct(x.n, b.n), wr: pct(x.w, x.n), n: x.n, why: x.why });
     const forMatch = scored.filter((x) => x.why[0].key !== 'why.popular').slice(0, 3).map(item);
     const chosen = new Set(forMatch.map((x) => x.id));
     const situational = scored.filter((x) => !chosen.has(x.id)).slice(0, 5).map(item);
@@ -307,20 +332,20 @@ class BuildDB extends EventEmitter {
     // botas
     const bootsPool = Object.entries(b.boots).map(([id, [n, w]]) => ({ id: Number(id), n, w })).sort((x, y) => y.n - x.n);
     let boots = base.boots;
-    let bootsWhy = null;
-    const has = (id) => bootsPool.find((x) => x.id === id);
-    const pickBoots = (id, key) => { const x = has(id); if (x) { boots = [item({ ...x, why: [] }), ...base.boots.filter((y) => y.id !== id)].slice(0, 2); bootsWhy = { key }; } };
+    let bootsWhy: { key: string } | null = null;
+    const has = (id: number) => bootsPool.find((x) => x.id === id);
+    const pickBoots = (id: number, key: string) => { const x = has(id); if (x) { boots = [item({ ...x, why: [] }), ...base.boots.filter((y: any) => y.id !== id)].slice(0, 2); bootsWhy = { key }; } };
     if (comp && (comp.adPct >= 65 || (opp && opp.damageType === 'AD' && comp.adPct >= 55))) pickBoots(3047, 'why.bootsArmor');
     else if (comp && (comp.apPct >= 60 || comp.cc >= 3 || (opp && opp.damageType === 'AP' && comp.apPct >= 50))) pickBoots(3111, 'why.bootsMr');
 
     // item inicial: corpo-a-corpo contra alguém à distância no topo
     let starting = base.details ? base.details.starting : null;
-    let startWhy = null;
+    let startWhy: { key: string; p: Record<string, any> } | null = null;
     if (opp && opp.ranged && ctx.meRanged === false && (base.role === 'TOP' || base.requestedRole === 'TOP') && gd.item(1054)) {
       starting = [1054, 2003].map((id) => ({ id, name: gd.itemName(id), icon: gd.itemIcon(id) }));
       startWhy = { key: 'why.doranShield', p: { champ: opp.name } };
     }
-    const tips = [];
+    const tips: { key: string; p: Record<string, any> }[] = [];
     if (opp && opp.ranged && ctx.meRanged === false) tips.push({ key: 'mu.runeTip', p: { champ: opp.name } });
 
     return {
@@ -332,36 +357,36 @@ class BuildDB extends EventEmitter {
   }
 
   // ---------- detalhes via timelines (itens iniciais, ordem de itens e habilidades) ----------
-  async loadDetails(champId, role) {
-    champId = Number(champId);
+  async loadDetails(champIdIn: number | string, role: string | null): Promise<any> {
+    const champId = Number(champIdIn);
     const { b, role: usedRole } = this.bucket(champId, role);
     if (!b) return null;
     const key = `${champId}:${usedRole}`;
     const cached = this.data.details[key];
     if (cached && Date.now() - cached.at < DETAILS_MS && cached.sample >= 3 && (!cached.patch || cached.patch === this.currentPatch())) return this.getBuild(champId, role);
     const refs = [...b.refs].sort((x, y) => y.w - x.w || y.t - x.t).slice(0, 10);
-    const starts = [], orders = [], firsts = [], maxes = [], seqs = [];
+    const starts: string[] = [], orders: number[][] = [], firsts: string[] = [], maxes: string[] = [], seqs: string[][] = [];
     for (const ref of refs) {
       try {
         const game = await this.lcu.safeGet(`/lol-match-history/v1/games/${ref.g}`);
         if (!game) continue;
-        const ident = (game.participantIdentities || []).find((i) => i.player && i.player.puuid === ref.p);
+        const ident = (game.participantIdentities || []).find((i: any) => i.player && i.player.puuid === ref.p);
         const pid = ident ? ident.participantId : null;
         if (!pid) continue;
         const tl = await this.lcu.safeGet(`/lol-match-history/v1/game-timelines/${ref.g}`);
         if (!tl || !tl.frames) continue;
-        const ev = tl.frames.flatMap((f) => f.events || []).filter((e) => e.participantId === pid).sort((a, b) => a.timestamp - b.timestamp);
-        const buys = ev.filter((e) => e.type === 'ITEM_PURCHASED');
-        const start = buys.filter((e) => e.timestamp <= 60000 && !TRINKETS.has(e.itemId)).map((e) => e.itemId);
-        if (start.length) starts.push(start.sort((a, b) => a - b).join(','));
-        const order = [];
+        const ev = tl.frames.flatMap((f: any) => f.events || []).filter((e: any) => e.participantId === pid).sort((a: any, b2: any) => a.timestamp - b2.timestamp);
+        const buys = ev.filter((e: any) => e.type === 'ITEM_PURCHASED');
+        const start = buys.filter((e: any) => e.timestamp <= 60000 && !TRINKETS.has(e.itemId)).map((e: any) => e.itemId as number);
+        if (start.length) starts.push(start.sort((a: number, b2: number) => a - b2).join(','));
+        const order: number[] = [];
         for (const e of buys) if (this.gd.isCompleted(e.itemId) && !this.gd.isBoots(e.itemId) && !order.includes(e.itemId)) order.push(e.itemId);
         if (order.length) orders.push(order.slice(0, 3));
-        const skills = ev.filter((e) => e.type === 'SKILL_LEVEL_UP' && (!e.levelUpType || e.levelUpType === 'NORMAL')).map((e) => KEYS[e.skillSlot]).filter(Boolean);
+        const skills: string[] = ev.filter((e: any) => e.type === 'SKILL_LEVEL_UP' && (!e.levelUpType || e.levelUpType === 'NORMAL')).map((e: any) => KEYS[e.skillSlot]).filter(Boolean);
         if (skills.length >= 3) {
           firsts.push(skills.slice(0, 3).join(''));
           seqs.push(skills.slice(0, 18));
-          const cnt = { Q: 0, W: 0, E: 0 }, done = [];
+          const cnt: Record<string, number> = { Q: 0, W: 0, E: 0 }, done: string[] = [];
           for (const s of skills) { if (s in cnt) { cnt[s]++; if (cnt[s] === 5) done.push(s); } }
           const rest = ['Q', 'W', 'E'].filter((s) => !done.includes(s)).sort((x, y) => cnt[y] - cnt[x]);
           maxes.push([...done, ...rest].join(' > '));
@@ -369,13 +394,14 @@ class BuildDB extends EventEmitter {
         await sleep(150);
       } catch { /* jogo sem timeline */ }
     }
-    const orderPos = (i) => { const m = mode(orders.map((o) => o[i])); return m ? Number(m.value) : null; };
-    const order = [];
+    const orderPos = (i: number) => { const m = mode(orders.map((o) => o[i])); return m ? Number(m.value) : null; };
+    const order: number[] = [];
     for (let i = 0; i < 3; i++) { const v = orderPos(i); if (v && !order.includes(v)) order.push(v); }
-    const seqMode = [];
+    const seqMode: (string | null)[] = [];
     for (let i = 0; i < 18; i++) { const m = mode(seqs.map((s) => s[i])); seqMode.push(m ? m.value : null); }
     const startMode = mode(starts);
     const maxMode = mode(maxes);
+    const firstMode = mode(firsts);
     this.data.details[key] = {
       at: Date.now(),
       patch: this.currentPatch(),
@@ -383,7 +409,7 @@ class BuildDB extends EventEmitter {
       starting: startMode ? startMode.value.split(',').map(Number) : [],
       order,
       skillOrder: maxMode ? maxMode.value : null,
-      first: mode(firsts) ? mode(firsts).value : null,
+      first: firstMode ? firstMode.value : null,
       skillSeq: seqMode
     };
     this.save();
@@ -391,7 +417,7 @@ class BuildDB extends EventEmitter {
   }
 
   // ---------- recolha de jogos ----------
-  async collect({ maxPlayers = 150 } = {}) {
+  async collect({ maxPlayers = 150 }: { maxPlayers?: number } = {}): Promise<void> {
     if (this.status.running) return;
     this.status = { ...this.status, running: true, done: 0, total: 0, error: null };
     this.emit('status', this.status);
@@ -399,12 +425,12 @@ class BuildDB extends EventEmitter {
       await this.gd.load();
       const region = await this.lcu.safeGet('/riotclient/region-locale', {});
       this.data.region = (region && (region.region || region.webRegion)) || this.data.region;
-      let players = [];
+      let players: string[] = [];
       for (const tier of ['CHALLENGER', 'GRANDMASTER', 'MASTER']) {
         if (players.length >= maxPlayers) break;
         const lad = await this.lcu.safeGet(`/lol-ranked/v1/apex-leagues/RANKED_SOLO_5x5/${tier}`);
-        const st = (lad && (lad.divisions || []).flatMap((d) => d.standings || [])) || [];
-        players.push(...st.filter((s) => s.puuid).sort((a, b) => (b.leaguePoints || 0) - (a.leaguePoints || 0)).map((s) => s.puuid));
+        const st = (lad && (lad.divisions || []).flatMap((d: any) => d.standings || [])) || [];
+        players.push(...st.filter((s: any) => s.puuid).sort((a: any, b: any) => (b.leaguePoints || 0) - (a.leaguePoints || 0)).map((s: any) => s.puuid as string));
       }
       players = [...new Set(players)].slice(0, maxPlayers).filter((p) => !this.data.fetched[p] || Date.now() - this.data.fetched[p] > STALE_MS);
       if (!players.length && this.countGames() === 0) throw new Error('err.noLadder');
@@ -428,7 +454,7 @@ class BuildDB extends EventEmitter {
       this.data.updated = Date.now();
       this.save();
     } catch (e) {
-      this.status.error = String(e.message || e);
+      this.status.error = String((e as Error).message || e);
       log.error('builds', this.status.error);
     }
     this.status.running = false;
@@ -445,13 +471,15 @@ class BuildDB extends EventEmitter {
 
 // Fragmentos válidos por fila (desde 2024)
 const SHARD_ROWS = [[5008, 5005, 5007], [5008, 5010, 5001], [5011, 5013, 5001]];
-const POS_LCU = { TOP: 'top', JUNGLE: 'jungle', MIDDLE: 'middle', BOTTOM: 'bottom', UTILITY: 'utility' };
+const POS_LCU: Record<string, string> = { TOP: 'top', JUNGLE: 'jungle', MIDDLE: 'middle', BOTTOM: 'bottom', UTILITY: 'utility' };
+
+interface Page { primary: number; sub: number; perks: number[]; shards: number[] }
 
 // Confirma que a página é válida (runas nas árvores e filas certas); corrige os fragmentos
-function validatePage(page, gd) {
+export function validatePage(page: any, gd: GameData | null): Page | null {
   if (!page || !page.primary || !page.sub || page.primary === page.sub) return null;
   const perks = (page.perks || []).map(Number);
-  if (perks.length !== 6 || perks.some((x) => !x)) return null;
+  if (perks.length !== 6 || perks.some((x: number) => !x)) return null;
   const P = gd && gd.styles[page.primary];
   const S = gd && gd.styles[page.sub];
   if (P && P.slots && P.slots.length >= 4) {
@@ -466,21 +494,21 @@ function validatePage(page, gd) {
 }
 
 // Página recomendada pela própria Riot (usada se não houver dados de alto elo)
-async function recommendedPage(lcu, championId, position) {
+async function recommendedPage(lcu: LcuLike, championId: number, position: string | null): Promise<Page | null> {
   const pos = POS_LCU[position] || 'none';
   const list = await lcu.safeGet(`/lol-perks/v1/recommended-pages/champion/${championId}/position/${pos}/map/11`)
     || await lcu.safeGet(`/lol-perks/v1/recommended-pages/champion/${championId}/position/none/map/11`);
   const r = Array.isArray(list) && list[0];
   if (!r) return null;
-  const ids = (r.perks || []).map((x) => (typeof x === 'object' ? x.id : x)).filter(Boolean);
+  const ids = (r.perks || []).map((x: any) => (typeof x === 'object' ? x.id : x)).filter(Boolean);
   if (ids.length < 6) return null;
   return { primary: r.primaryPerkStyleId, sub: r.secondaryPerkStyleId, perks: ids.slice(0, 6), shards: ids.slice(6, 9) };
 }
 
-async function importRunes(lcu, build, { gd = null, position = null } = {}) {
+export async function importRunes(lcu: LcuLike, build: any, { gd = null, position = null }: { gd?: GameData | null; position?: string | null } = {}) {
   if (!build) throw new Error('err.noRunes');
   let page = build.runes ? validatePage(build.runes, gd) : null;
-  let source = 'highElo';
+  let source: 'highElo' | 'riot' = 'highElo';
   if (!page) {
     if (build.runes) log.warn('runes', `página de alto elo inválida para ${build.championName}: ${JSON.stringify({ p: build.runes.primary, s: build.runes.sub, perks: build.runes.perks })}`);
     page = validatePage(await recommendedPage(lcu, build.championId, position || build.requestedRole || build.role), gd);
@@ -490,19 +518,19 @@ async function importRunes(lcu, build, { gd = null, position = null } = {}) {
 
   const name = `LoL Scout ${build.championName}`.slice(0, 25);
   const body = { name, primaryStyleId: page.primary, subStyleId: page.sub, selectedPerkIds: [...page.perks, ...page.shards], current: true };
-  const pages = (await lcu.get('/lol-perks/v1/pages')) || [];
+  const pages: any[] = (await lcu.get('/lol-perks/v1/pages')) || [];
   const editable = pages.filter((p) => p.isEditable !== false && p.isDeletable !== false && !p.isTemporary);
   const ours = editable.find((p) => String(p.name || '').startsWith('LoL Scout'));
-  let replaced = null;
-  let pageId = null;
+  let replaced: string | null = null;
+  let pageId: number | null = null;
 
-  const putPage = async (target) => {
+  const putPage = async (target: any): Promise<number | null> => {
     try {
       await lcu.put(`/lol-perks/v1/pages/${target.id}`, { ...target, ...body, id: target.id });
       return target.id;
     } catch (e) {
       // algumas versões do cliente não aceitam PUT: apagar e criar de novo
-      log.warn('runes', `PUT falhou (${e.message}); a apagar e criar`);
+      log.warn('runes', `PUT falhou (${(e as Error).message}); a apagar e criar`);
       await lcu.del(`/lol-perks/v1/pages/${target.id}`);
       const created = await lcu.post('/lol-perks/v1/pages', body);
       return created && created.id;
@@ -517,7 +545,7 @@ async function importRunes(lcu, build, { gd = null, position = null } = {}) {
       created = await lcu.post('/lol-perks/v1/pages', body);
     } catch (e) {
       // sem páginas livres: substituir a página atual (ou a primeira editável)
-      log.warn('runes', `não foi possível criar página (${e.message}); a substituir a atual`);
+      log.warn('runes', `não foi possível criar página (${(e as Error).message}); a substituir a atual`);
       const target = editable.find((p) => p.current) || editable[0];
       if (!target) throw new Error('err.noRunePage');
       replaced = target.name || null;
@@ -532,28 +560,26 @@ async function importRunes(lcu, build, { gd = null, position = null } = {}) {
 
 const DEFAULT_LABELS = { start: 'Início', core: 'Itens principais', forMatch: 'Para esta partida', boots: 'Botas', situational: 'Situacionais', consumables: 'Consumíveis' };
 
-async function importItemSet(lcu, summonerId, build, labels = DEFAULT_LABELS) {
+export async function importItemSet(lcu: LcuLike, summonerId: number, build: any, labels: typeof DEFAULT_LABELS = DEFAULT_LABELS): Promise<boolean> {
   if (!build) throw new Error('err.noBuild');
   const p = `/lol-item-sets/v1/item-sets/${summonerId}/sets`;
   const cur = (await lcu.get(p)) || {};
   const title = `LoL Scout ${build.championName}`;
-  const sets = (cur.itemSets || []).filter((s) => !(s.title === title || (String(s.title || '').startsWith('LoL Scout') && (s.associatedChampions || []).includes(build.championId))));
-  const blocks = [];
-  const block = (type, ids) => { if (ids.length) blocks.push({ type, items: ids.map((id) => ({ id: String(id), count: 1 })) }); };
-  const pickInfo = (x) => `${x.pick}%`;
-  block(labels.start, build.details && build.details.starting.length ? build.details.starting.map((x) => x.id) : []);
-  block(`${labels.core} (${build.core.map(pickInfo).join(' · ')})`, build.core.map((x) => x.id));
-  if (build.forMatch && build.forMatch.length) block(`${labels.forMatch || DEFAULT_LABELS.forMatch}${build.vs ? ' (vs ' + build.vs.name + ')' : ''}`, build.forMatch.map((x) => x.id));
-  block(labels.boots, build.boots.map((x) => x.id));
-  block(labels.situational, build.situational.map((x) => x.id));
+  const sets = (cur.itemSets || []).filter((s: any) => !(s.title === title || (String(s.title || '').startsWith('LoL Scout') && (s.associatedChampions || []).includes(build.championId))));
+  const blocks: { type: string; items: { id: string; count: number }[] }[] = [];
+  const block = (type: string, ids: number[]) => { if (ids.length) blocks.push({ type, items: ids.map((id) => ({ id: String(id), count: 1 })) }); };
+  const pickInfo = (x: any) => `${x.pick}%`;
+  block(labels.start, build.details && build.details.starting.length ? build.details.starting.map((x: any) => x.id) : []);
+  block(`${labels.core} (${build.core.map(pickInfo).join(' · ')})`, build.core.map((x: any) => x.id));
+  if (build.forMatch && build.forMatch.length) block(`${labels.forMatch || DEFAULT_LABELS.forMatch}${build.vs ? ' (vs ' + build.vs.name + ')' : ''}`, build.forMatch.map((x: any) => x.id));
+  block(labels.boots, build.boots.map((x: any) => x.id));
+  block(labels.situational, build.situational.map((x: any) => x.id));
   block(labels.consumables, [2003, 2055]);
   const skill = build.details && build.details.skillOrder ? ` · ${build.details.skillOrder}` : '';
   sets.unshift({
     title: `${title}${build.vs ? ' vs ' + build.vs.name : ''}${skill}`.slice(0, 75), associatedChampions: [build.championId], associatedMaps: [11], blocks,
-    map: 'any', mode: 'any', preferredItemSlots: [], sortrank: 0, startedFrom: 'blank', type: 'custom', uid: crypto.randomUUID()
+    map: 'any', mode: 'any', preferredItemSlots: [], sortrank: 0, startedFrom: 'blank', type: 'custom', uid: globalThis.crypto.randomUUID()
   });
   await lcu.put(p, { ...cur, itemSets: sets, timestamp: Date.now() });
   return true;
 }
-
-module.exports = { BuildDB, importRunes, importItemSet, validatePage };

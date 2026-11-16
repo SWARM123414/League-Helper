@@ -1,17 +1,38 @@
-// Testes rápidos: node test/analyzer.test.js
-const assert = require('assert');
-const os = require('os');
-const path = require('path');
-const fs = require('fs');
-const A = require('../src/analyzer');
-const { parseLockfile, parseCommandLine } = require('../src/lcu');
-const { Tracker } = require('../src/tracker');
-const { Store } = require('../src/store');
-const { DemoLCU, demoLive, CHAMPS } = require('../src/demo');
-const { GameData } = require('../src/gamedata');
-const { BuildDB, importRunes, importItemSet } = require('../src/builds');
-const { demoFetch } = require('../src/demo-static');
-const I18N = require('../renderer/i18n');
+// Testes do motor (sem cliente do LoL nem Tauri): node test/analyzer.test.ts
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import * as A from '../src/core/analyzer.ts';
+import { BuildDB, importItemSet, importRunes, validatePage } from '../src/core/builds.ts';
+import { CHAMPS, DemoLCU, demoLive } from '../src/core/demo.ts';
+import { demoFetch } from '../src/core/demo-static.ts';
+import { GameData } from '../src/core/gamedata.ts';
+import * as I18N from '../src/core/i18n.ts';
+import { LCU, parseCommandLine, parseLockfile } from '../src/core/lcu.ts';
+import { setPlatform } from '../src/core/platform.ts';
+import type { Platform } from '../src/core/platform.ts';
+import { Store } from '../src/core/store.ts';
+import { Tracker } from '../src/core/tracker.ts';
+
+// "Sistema" de teste: ficheiros numa pasta temporária, sem rede local
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scout-'));
+const requests: any[] = [];
+const nodePlatform: Platform = {
+  async readData(name) { try { return fs.readFileSync(path.join(dir, name), 'utf8'); } catch { return null; } },
+  async writeData(name, text) { fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true }); fs.writeFileSync(path.join(dir, name), text); },
+  async appendData(name, text) { fs.appendFileSync(path.join(dir, name), text); },
+  async rotateData() { /* nada */ },
+  async localRequest(req) {
+    requests.push(req);
+    if (req.port === 1) throw new Error('ECONNREFUSED');
+    return { status: 404, body: { message: 'nope' } };
+  },
+  async leagueProcess() { return { cmdline: '"C:/x/LeagueClientUx.exe" "--app-port=4321" "--remoting-auth-token=tok-9"', exeDir: 'C:\\x' }; },
+  async readLockfile() { return null; },
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+};
+setPlatform(nodePlatform);
 
 // lockfile e linha de comandos
 assert.deepStrictEqual(parseLockfile('LeagueClient:1234:54321:abcDEF_12:https'), { pid: 1234, port: 54321, password: 'abcDEF_12', protocol: 'https' });
@@ -19,6 +40,7 @@ const cmd = '"C:/Riot Games/League of Legends/LeagueClientUx.exe" "--riotclient-
 const c = parseCommandLine(cmd);
 assert.strictEqual(c.port, 61234);
 assert.strictEqual(c.password, 'Ab-c_9');
+assert.strictEqual(c.installDir, 'C:\\Riot Games\\League of Legends');
 
 // ranks
 const r = A.parseRanked({ queueMap: { RANKED_SOLO_5x5: { tier: 'GOLD', division: 'II', leaguePoints: 40, wins: 30, losses: 20 } } });
@@ -33,14 +55,30 @@ const groups = A.detectPremades([{ gameIds: [1, 2, 3] }, { gameIds: [9] }, { gam
 assert.deepStrictEqual(groups, [[0, 2]]);
 
 async function run() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scout-'));
-  const store = new Store(dir);
+  // ----- ligação ao cliente através da plataforma -----
+  const real = new LCU();
+  assert.strictEqual(await real.connect(), true, '404 do summoner conta como "a arrancar"');
+  assert.strictEqual(real.creds.port, 4321);
+  assert.strictEqual(requests[0].auth, 'riot:tok-9');
+  assert.strictEqual(requests[0].path, '/lol-summoner/v1/current-summoner');
+  await assert.rejects(real.get('/x'), (e: any) => e.status === 404);
+  real.creds.port = 1;
+  await assert.rejects(real.get('/x'), (e: any) => e.code === 'ECONNREFUSED');
+  assert.strictEqual(real.connected, false, 'ligação recusada desliga');
+
+  // ----- persistência -----
+  const store = await new Store().load();
   store.setSettings({ collectBuilds: false });
+  await store.flush();
+  const again = await new Store().load();
+  assert.strictEqual(again.settings.collectBuilds, false, 'definições gravadas e lidas');
+  assert.strictEqual(again.settings.overlayKey, 'Ctrl+Shift+Z', 'valores por omissão');
+
   const lcu = new DemoLCU();
   const gd = new GameData({ fetchJson: demoFetch(CHAMPS) });
   assert.ok(await gd.load(), 'dados estáticos');
   assert.ok(gd.isCompleted(3157) && !gd.isCompleted(2003) && gd.isBoots(3020) && !gd.isCompleted(1001));
-  const builds = new BuildDB({ lcu, gamedata: gd, dir: null });
+  const builds = await new BuildDB({ lcu, gamedata: gd }).load();
 
   // ----- builds -----
   const t0 = Date.now();
@@ -51,7 +89,7 @@ async function run() {
   console.log(`  recolha: ${builds.countGames()} jogos em ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   let b = builds.getBuild(103, 'MIDDLE');
   assert.strictEqual(b.role, 'MIDDLE');
-  assert.deepStrictEqual(b.core.slice(0, 2).map((x) => x.id).sort(), [3157, 6655]);
+  assert.deepStrictEqual(b.core.slice(0, 2).map((x: any) => x.id).sort(), [3157, 6655]);
   assert.strictEqual(b.boots[0].id, 3020);
   assert.strictEqual(b.runes.perks[0], 8112, 'keystone');
   assert.deepStrictEqual(b.runes.perks.slice(4), [8226, 8210]);
@@ -59,19 +97,19 @@ async function run() {
   assert.deepStrictEqual(b.spells[0].ids, [4, 14]);
   assert.ok(b.games > 50 && b.winrate > 0);
   b = await builds.loadDetails(103, 'MIDDLE');
-  assert.deepStrictEqual(b.details.starting.map((x) => x.id), [1056, 2003, 2003]);
+  assert.deepStrictEqual(b.details.starting.map((x: any) => x.id), [1056, 2003, 2003]);
   assert.strictEqual(b.details.skillOrder, 'Q > W > E');
   assert.strictEqual(b.details.skillSeq.slice(0, 3).join(''), 'QWE');
-  assert.deepStrictEqual(b.core.slice(0, 2).map((x) => x.id), [6655, 3157], 'ordem real de compra');
+  assert.deepStrictEqual(b.core.slice(0, 2).map((x: any) => x.id), [6655, 3157], 'ordem real de compra');
   // patches: usa o atual e junta os anteriores com menos peso
   assert.strictEqual(builds.currentPatch(), '14.23');
   assert.strictEqual(b.patch, '14.23');
   assert.ok(b.patchesUsed[0].patch === '14.23' && b.patchesUsed[0].weight === 1);
   const aram = builds.getBuild(103, 'ARAM');
   assert.ok(aram && aram.role === 'ARAM' && aram.games > 0, 'build de ARAM');
-  assert.ok(builds.rolesFor(103).some((r) => r.role === 'ARAM'));
+  assert.ok(builds.rolesFor(103).some((x) => x.role === 'ARAM'));
   // só guarda 3 patches
-  const fake = (patch, id) => ({ gameId: id, queueId: 420, championId: 103, win: true, items: [6655], perks: [], spells: [4, 14], shards: [], date: 1, patch, lane: 'MIDDLE', role: 'SOLO' });
+  const fake = (patch: string, id: number): A.Game => ({ gameId: id, queueId: 420, championId: 103, win: true, items: [6655], perks: [], spells: [4, 14], shards: [], date: 1, patch, lane: 'MIDDLE', role: 'SOLO' } as any);
   builds.addGame('x', fake('14.20', 1)); builds.addGame('x', fake('14.21', 2));
   assert.deepStrictEqual(builds.patchList(), ['14.23', '14.22', '14.21']);
   // posição sem dados suficientes cai para "todas"
@@ -98,7 +136,6 @@ async function run() {
   assert.strictEqual(ri.source, 'riot');
   assert.strictEqual(lcu.perkPages.find((p) => p.name.startsWith('LoL Scout')).primaryStyleId, 8000);
   // fragmentos inválidos são corrigidos
-  const { validatePage } = require('../src/builds');
   assert.deepStrictEqual(validatePage({ ...b.runes, shards: [5011, 5002, 5003] }, gd).shards, [5008, 5008, 5011]);
 
   const tracker = new Tracker({ lcu, live: demoLive(lcu), store, gamedata: gd, builds, interval: 10 });
@@ -110,7 +147,7 @@ async function run() {
   assert.strictEqual(tracker.state.champSelect.allies.length, 5);
   await new Promise((res) => setTimeout(res, 50));
   await tracker.tick();
-  const meCS = tracker.state.champSelect.allies.find((p) => p.isMe);
+  const meCS = tracker.state.champSelect.allies.find((p: any) => p.isMe);
   assert.ok(meCS.analysis, 'análise do próprio jogador na seleção');
   assert.strictEqual(tracker.state.champSelect.myBuild.championId, 103, 'build na seleção');
   assert.ok(tracker.state.champSelect.comp.tips.length > 0);
@@ -124,14 +161,14 @@ async function run() {
   assert.strictEqual(tracker.state.view, 'game');
   assert.strictEqual(g.loading, false, 'todos carregados');
   assert.strictEqual(g.enemies.length, 5);
-  const opp = g.enemies.find((p) => p.laneOpponent);
+  const opp = g.enemies.find((p: any) => p.laneOpponent);
   assert.strictEqual(opp.championName, 'Yasuo', 'adversário de mid');
   assert.deepStrictEqual(g.premades.enemies, [['GankMachine', 'HookCity']], 'duo inimigo');
-  assert.ok(g.enemies.find((p) => p.mostDangerous).name === 'xYasuox', 'smurf é o mais perigoso');
-  const yas = g.enemies.find((p) => p.name === 'xYasuox');
-  assert.ok(yas.analysis.tags.some((t) => t.key === 'smurf'));
-  assert.ok(yas.analysis.tags.some((t) => t.key === 'oneTrick' || t.key === 'main'));
-  assert.ok(g.allies.find((p) => p.name === 'Pinguim').analysis.tags.some((t) => t.key === 'tilt'));
+  assert.ok(g.enemies.find((p: any) => p.mostDangerous).name === 'xYasuox', 'smurf é o mais perigoso');
+  const yas = g.enemies.find((p: any) => p.name === 'xYasuox');
+  assert.ok(yas.analysis.tags.some((t: any) => t.key === 'smurf'));
+  assert.ok(yas.analysis.tags.some((t: any) => t.key === 'oneTrick' || t.key === 'main'));
+  assert.ok(g.allies.find((p: any) => p.name === 'Pinguim').analysis.tags.some((t: any) => t.key === 'tilt'));
   assert.ok(yas.live && yas.live.cs > 0, 'dados ao vivo');
   assert.ok(g.myBuild && g.myBuild.championId === 103, 'build no jogo');
   assert.ok(g.comp && g.comp.enemy.adPct > 50 && g.comp.tips.length, 'composição');
@@ -140,7 +177,7 @@ async function run() {
   const info = await gd.champion(157);
   assert.strictEqual(info.spells.length, 4);
   assert.ok(info.enemytips.length);
-  fs.writeFileSync(path.join(__dirname, 'sample-state.json'), JSON.stringify({ ...tracker.state, settings: store.settings, demo: true }, null, 1));
+  fs.writeFileSync(path.join(import.meta.dirname, 'sample-state.json'), JSON.stringify({ ...tracker.state, settings: store.settings, demo: true }, null, 1));
 
   // histórico
   const h = await tracker.ownHistory();
@@ -162,9 +199,9 @@ async function run() {
 
   // diagnóstico
   const diag = await tracker.diagnose();
-  const ok = Object.fromEntries(diag.map((c) => [c.name, c.ok]));
+  const ok = Object.fromEntries(diag.map((x) => [x.name, x.ok]));
   assert.ok(ok.client && ok.summoner && ok.history && ok.ladder && ok.runePages && ok.itemSets && ok.builds, JSON.stringify(diag));
-  for (const c of diag) for (const l of Object.keys(I18N.D)) assert.ok(I18N.D[l]['diag.' + c.name], `falta diag.${c.name} em ${l}`);
+  for (const x of diag) for (const l of Object.keys(I18N.D)) assert.ok(I18N.D[l]['diag.' + x.name], `falta diag.${x.name} em ${l}`);
 
   // perfil do jogador
   const prof = await tracker.playerProfile('e3');
@@ -173,7 +210,7 @@ async function run() {
   assert.ok(prof.champs[0].name === 'Yasuo' && prof.rank.solo.tier === 'DIAMOND');
 
   // traduções: todas as chaves usadas pelo motor existem nos 4 idiomas
-  const used = new Set();
+  const used = new Set<string>();
   for (const p of [...g.allies, ...g.enemies]) for (const t of p.analysis.tags) { used.add('tag.' + t.key); used.add('tagT.' + t.key); }
   for (const t of g.comp.tips) used.add(t.key);
   for (const l of Object.keys(I18N.D)) for (const k of used) assert.ok(I18N.D[l][k], `falta ${k} em ${l}`);
@@ -183,29 +220,30 @@ async function run() {
   const mb = g.myBuild;
   assert.strictEqual(mb.vs.name, 'Yasuo');
   assert.ok(mb.forMatch.length > 0, 'itens para esta partida');
-  assert.ok(mb.forMatch.some((x) => x.id === 3165 && x.why.some((w) => w.key === 'why.antiheal')), 'Morellonomicon contra cura');
-  for (const x of mb.forMatch) assert.ok(!mb.core.some((c) => c.id === x.id), 'não repete o core');
+  assert.ok(mb.forMatch.some((x: any) => x.id === 3165 && x.why.some((w: any) => w.key === 'why.antiheal')), 'Morellonomicon contra cura');
+  for (const x of mb.forMatch) assert.ok(!mb.core.some((y: any) => y.id === x.id), 'não repete o core');
   // corpo-a-corpo no topo contra alguém à distância, equipa muito física
   const base = builds.getBuild(266, 'TOP');
   const ctx = tracker.matchupCtx(266, 51, [51, 122, 114, 157, 64]);
   assert.strictEqual(ctx.opp.ranged, true);
   assert.strictEqual(ctx.meRanged, false);
   const vsCait = builds.matchupBuild(base, ctx);
-  assert.deepStrictEqual(vsCait.details.starting.map((x) => x.id), [1054, 2003], 'Escudo de Doran');
+  assert.deepStrictEqual(vsCait.details.starting.map((x: any) => x.id), [1054, 2003], 'Escudo de Doran');
   assert.strictEqual(vsCait.boots[0].id, 3047, 'botas de aço contra equipa física');
-  assert.ok(vsCait.tips.some((t) => t.key === 'mu.runeTip'));
-  assert.ok(vsCait.forMatch.every((x) => x.why.some((w) => w.key === 'why.armor' || w.key === 'why.laneArmor' || w.key === 'why.antiheal' || w.key === 'why.pen')));
-  const allWhy = [...mb.forMatch, ...vsCait.forMatch].flatMap((x) => x.why.map((w) => w.key)).concat(['why.bootsArmor', 'why.bootsMr', 'why.doranShield', 'mu.runeTip', 'mu.forMatch', 'mu.title']);
+  assert.ok(vsCait.tips.some((t: any) => t.key === 'mu.runeTip'));
+  assert.ok(vsCait.forMatch.every((x: any) => x.why.some((w: any) => w.key === 'why.armor' || w.key === 'why.laneArmor' || w.key === 'why.antiheal' || w.key === 'why.pen')));
+  const allWhy = [...mb.forMatch, ...vsCait.forMatch].flatMap((x: any) => x.why.map((w: any) => w.key)).concat(['why.bootsArmor', 'why.bootsMr', 'why.doranShield', 'mu.runeTip', 'mu.forMatch', 'mu.title']);
   for (const l of Object.keys(I18N.D)) for (const k of allWhy) assert.ok(I18N.D[l][k], `falta ${k} em ${l}`);
 
   const m = await tracker.importBuild(103, 'MIDDLE');
   assert.ok(lcu.itemSets.itemSets[0].title.includes('vs Yasuo'), 'conjunto de itens contra o adversário');
-  assert.ok(lcu.itemSets.itemSets[0].blocks.some((bl) => bl.type.startsWith('Para esta partida')));
+  assert.ok(lcu.itemSets.itemSets[0].blocks.some((bl: any) => bl.type.startsWith('Para esta partida')));
   assert.deepStrictEqual(m, { key: 'imp.done', what: ['runes', 'items'], champ: 'Ahri', runeSource: 'highElo', replaced: null });
   // idioma da Data Dragon muda
   await gd.setLang('en_US');
   assert.ok(gd.ready);
 
+  await store.flush();
   console.log('OK — todos os testes passaram');
 }
 run().catch((e) => { console.error(e); process.exit(1); });

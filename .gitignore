@@ -1,6 +1,5 @@
-dist\LoL Scout Setup 1.1.0.exe
-dist\LoL Scout Setup 1.1.0.exe.blockmap
-dist/
-dist/
 node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
 test/sample-state.json

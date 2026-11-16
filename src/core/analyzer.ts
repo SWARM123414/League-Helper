@@ -2,13 +2,61 @@
 // mains/one-tricks, possíveis smurfs, tilt, duos e "nível de ameaça".
 // Funções puras (sem rede) para poderem ser testadas sem o cliente aberto.
 
-const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
-const DIVS = { IV: 0, III: 1, II: 2, I: 3 };
-
+export const TIERS = ['IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'EMERALD', 'DIAMOND', 'MASTER', 'GRANDMASTER', 'CHALLENGER'];
+const DIVS: Record<string, number> = { IV: 0, III: 1, II: 2, I: 3 };
 
 const REMAKE_SECONDS = 300;
 
-function rankValue(entry) {
+export interface Rank {
+  tier: string;
+  division: string | null;
+  lp: number;
+  wins: number;
+  losses: number;
+  winrate: number | null;
+  games: number;
+  value: number | null;
+}
+
+export interface Game {
+  participantId: number;
+  items: number[];
+  perks: number[];
+  primaryStyle: number | null;
+  subStyle: number | null;
+  shards: number[];
+  gameId: number;
+  date: number;
+  duration: number;
+  queueId: number;
+  gameMode: string | null;
+  patch: string | null;
+  championId: number;
+  win: boolean;
+  kills: number;
+  deaths: number;
+  assists: number;
+  cs: number;
+  lane: string | null;
+  role: string | null;
+  spells: number[];
+  remake: boolean;
+}
+
+export interface Aggregate {
+  games: number;
+  wins: number;
+  losses: number;
+  winrate: number | null;
+  kda: string | null;
+  k: number;
+  d: number;
+  a: number;
+}
+
+export interface Tag { type: 'good' | 'bad' | 'info'; key: string; p: Record<string, any> }
+
+function rankValue(entry: any): number | null {
   if (!entry || !entry.tier || entry.tier === 'NONE' || entry.tier === '') return null;
   const t = TIERS.indexOf(entry.tier);
   if (t < 0) return null;
@@ -16,7 +64,7 @@ function rankValue(entry) {
   return t * 4 + (DIVS[entry.division] ?? 0) + (entry.leaguePoints || 0) / 100;
 }
 
-function formatRank(entry) {
+function formatRank(entry: any): Rank | null {
   if (!entry || !entry.tier || entry.tier === 'NONE' || entry.tier === '') return null;
   return {
     tier: entry.tier,
@@ -30,7 +78,7 @@ function formatRank(entry) {
   };
 }
 
-function parseRanked(ranked) {
+export function parseRanked(ranked: any) {
   const map = (ranked && ranked.queueMap) || {};
   const solo = formatRank(map.RANKED_SOLO_5x5);
   const flex = formatRank(map.RANKED_FLEX_SR);
@@ -39,22 +87,22 @@ function parseRanked(ranked) {
   return {
     solo,
     flex,
-    previousSeason: prevTier && prevTier !== 'NONE' && prevTier !== '' ? prevTier : null,
-    highest: highest && highest !== 'NONE' && highest !== '' ? highest : null
+    previousSeason: prevTier && prevTier !== 'NONE' && prevTier !== '' ? prevTier as string : null,
+    highest: highest && highest !== 'NONE' && highest !== '' ? highest as string : null
   };
 }
 
 // Normaliza os jogos que vêm de /lol-match-history/v1/products/lol/{puuid}/matches
-function normalizeGames(historyResponse, puuid) {
+export function normalizeGames(historyResponse: any, puuid?: string | null): Game[] {
   const list = (historyResponse && historyResponse.games && historyResponse.games.games) || [];
-  const out = [];
+  const out: Game[] = [];
   for (const g of list) {
     const parts = g.participants || [];
     const ids = g.participantIdentities || [];
     let p = parts[0];
     if (puuid && ids.length) {
-      const ident = ids.find((i) => i.player && i.player.puuid === puuid);
-      if (ident) p = parts.find((x) => x.participantId === ident.participantId) || p;
+      const ident = ids.find((i: any) => i.player && i.player.puuid === puuid);
+      if (ident) p = parts.find((x: any) => x.participantId === ident.participantId) || p;
     }
     if (!p || !p.stats) continue;
     const s = p.stats;
@@ -87,11 +135,11 @@ function normalizeGames(historyResponse, puuid) {
   return out;
 }
 
-function kda(k, d, a) {
+export function kda(k: number, d: number, a: number): string {
   return d === 0 ? (k + a > 0 ? '∞' : '0.00') : ((k + a) / d).toFixed(2);
 }
 
-function aggregate(games) {
+export function aggregate(games: Game[]): Aggregate {
   const n = games.length;
   if (!n) return { games: 0, wins: 0, losses: 0, winrate: null, kda: null, k: 0, d: 0, a: 0 };
   let w = 0, k = 0, d = 0, a = 0;
@@ -102,7 +150,7 @@ function aggregate(games) {
   };
 }
 
-function streak(games) {
+export function streak(games: Game[]): { type: 'win' | 'loss' | null; count: number } {
   if (!games.length) return { type: null, count: 0 };
   const first = games[0].win;
   let c = 0;
@@ -110,17 +158,17 @@ function streak(games) {
   return { type: first ? 'win' : 'loss', count: c };
 }
 
-const LANE_FROM_TIMELINE = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', MID: 'MIDDLE', BOTTOM: 'BOTTOM', BOT: 'BOTTOM' };
+const LANE_FROM_TIMELINE: Record<string, string> = { TOP: 'TOP', JUNGLE: 'JUNGLE', MIDDLE: 'MIDDLE', MID: 'MIDDLE', BOTTOM: 'BOTTOM', BOT: 'BOTTOM' };
 
-function roleOf(g) {
+export function roleOf(g: { spells?: number[]; lane?: string | null; role?: string | null }): string | null {
   if (g.spells && g.spells.includes(11)) return 'JUNGLE';
-  let r = LANE_FROM_TIMELINE[g.lane] || null;
+  let r = LANE_FROM_TIMELINE[g.lane as string] || null;
   if (r === 'BOTTOM' && (g.role === 'DUO_SUPPORT' || g.role === 'SUPPORT')) r = 'UTILITY';
   return r;
 }
 
-function mainRole(games) {
-  const counts = {};
+function mainRole(games: Game[]): string | null {
+  const counts: Record<string, number> = {};
   for (const g of games) {
     const r = roleOf(g);
     if (r) counts[r] = (counts[r] || 0) + 1;
@@ -129,18 +177,22 @@ function mainRole(games) {
   return best ? best[0] : null;
 }
 
-/**
- * Analisa um jogador.
- * @param {object} o
- * @param {string} o.puuid
- * @param {object} o.summoner  resposta de /lol-summoner/v2/summoners/puuid/{puuid}
- * @param {object} o.ranked    resposta de /lol-ranked/v1/ranked-stats/{puuid}
- * @param {object} o.history   resposta de /lol-match-history/.../matches
- * @param {number} o.championId campeão que está a jogar agora
- * @param {function} o.champName (id) => nome
- */
-function analyzePlayer(o) {
-  const { puuid, summoner = {}, ranked, history, championId, champName = (id) => String(id), isCompleted = null } = o;
+export interface AnalyzeInput {
+  puuid: string;
+  /** resposta de /lol-summoner/v2/summoners/puuid/{puuid} */
+  summoner?: any;
+  /** resposta de /lol-ranked/v1/ranked-stats/{puuid} */
+  ranked?: any;
+  /** resposta de /lol-match-history/.../matches */
+  history?: any;
+  /** campeão que está a jogar agora */
+  championId?: number;
+  champName?: (id: number) => string;
+  isCompleted?: ((id: number) => boolean) | null;
+}
+
+export function analyzePlayer(o: AnalyzeInput) {
+  const { puuid, summoner = {}, ranked, history, championId, champName = (id: number) => String(id), isCompleted = null } = o;
   const allGames = normalizeGames(history, puuid);
   const games = allGames.filter((g) => !g.remake);
   const rank = parseRanked(ranked);
@@ -150,7 +202,7 @@ function analyzePlayer(o) {
   const onChamp = games.filter((g) => g.championId === championId);
   const champStats = aggregate(onChamp);
 
-  const byChamp = {};
+  const byChamp: Record<string, Game[]> = {};
   for (const g of games) (byChamp[g.championId] = byChamp[g.championId] || []).push(g);
   const topChamps = Object.entries(byChamp)
     .map(([id, gs]) => ({ championId: Number(id), name: champName(Number(id)), ...aggregate(gs) }))
@@ -158,21 +210,21 @@ function analyzePlayer(o) {
     .slice(0, 3);
 
   // Itens que este jogador costuma fazer com o campeão atual
-  let champItems = [];
+  let champItems: { id: number; pct: number }[] = [];
   if (isCompleted && onChamp.length) {
-    const cnt = {};
+    const cnt: Record<string, number> = {};
     for (const g of onChamp) for (const id of new Set(g.items)) if (isCompleted(id)) cnt[id] = (cnt[id] || 0) + 1;
     champItems = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 6)
       .map(([id, n]) => ({ id: Number(id), pct: Math.round((n / onChamp.length) * 100) }));
   }
   // Keystone habitual no campeão
-  const ks = {};
+  const ks: Record<string, number> = {};
   for (const g of onChamp) if (g.perks[0]) ks[g.perks[0]] = (ks[g.perks[0]] || 0) + 1;
   const keystone = Object.entries(ks).sort((a, b) => b[1] - a[1])[0];
 
-  const level = summoner.summonerLevel || null;
-  const tags = [];
-  const add = (type, key, p = {}) => tags.push({ type, key, p });
+  const level: number | null = summoner.summonerLevel || null;
+  const tags: Tag[] = [];
+  const add = (type: Tag['type'], key: string, p: Record<string, any> = {}) => tags.push({ type, key, p });
   const cn = championId ? champName(championId) : '';
 
   // Experiência no campeão
@@ -203,10 +255,10 @@ function analyzePlayer(o) {
 
   return {
     puuid,
-    name: summoner.gameName || summoner.displayName || null,
-    tag: summoner.tagLine || null,
+    name: (summoner.gameName || summoner.displayName || null) as string | null,
+    tag: (summoner.tagLine || null) as string | null,
     level,
-    profileIconId: summoner.profileIconId || null,
+    profileIconId: (summoner.profileIconId || null) as number | null,
     privacy: summoner.privacy || null,
     rank,
     recent,
@@ -222,8 +274,10 @@ function analyzePlayer(o) {
   };
 }
 
+export type Analysis = ReturnType<typeof analyzePlayer>;
+
 // Pontuação de "ameaça" relativa: combina rank, forma e experiência no campeão.
-function threatScore(p) {
+export function threatScore(p: Analysis): number {
   const rv = p.rank.solo ? p.rank.solo.value : p.rank.flex ? p.rank.flex.value - 2 : null;
   let s = rv !== null ? rv * 2.2 : 25; // ~0..70
   if (p.recent.winrate !== null) s += (p.recent.winrate - 50) * 0.4;
@@ -238,9 +292,9 @@ function threatScore(p) {
 }
 
 // Deteta grupos (duo / premade) por jogos recentes em comum.
-function detectPremades(players, minShared = 2) {
+export function detectPremades(players: { gameIds?: number[] }[], minShared = 2): number[][] {
   const parent = players.map((_, i) => i);
-  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
   const sets = players.map((p) => new Set(p.gameIds || []));
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
@@ -249,18 +303,13 @@ function detectPremades(players, minShared = 2) {
       if (shared >= minShared) parent[find(i)] = find(j);
     }
   }
-  const groups = {};
+  const groups: Record<number, number[]> = {};
   players.forEach((_, i) => { (groups[find(i)] = groups[find(i)] || []).push(i); });
   return Object.values(groups).filter((g) => g.length > 1);
 }
 
-function slug(name) {
-  const special = { 'Nunu & Willump': 'nunu', 'Renata Glasc': 'renata', Wukong: 'wukong' };
+export function slug(name: string): string {
+  const special: Record<string, string> = { 'Nunu & Willump': 'nunu', 'Renata Glasc': 'renata', Wukong: 'wukong' };
   if (special[name]) return special[name];
   return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
-
-module.exports = {
-  analyzePlayer, threatScore, detectPremades, normalizeGames, roleOf, parseRanked, aggregate, streak, kda, slug,
-  TIERS
-};

@@ -399,3 +399,44 @@ table.diag tr.ok td:first-child { color: var(--good); }
 table.diag tr.bad td { color: var(--bad); }
 pre.log { background: var(--bg2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; max-height: 220px; overflow: auto; font: 11px/1.4 Consolas, monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; }
 .small-sample { margin-bottom: 6px; font-size: 12px; }
+
+/* ---------- moldura da janela (ao estilo do cliente do LoL) ---------- */
+/* A janela não tem a barra do Windows: a barra de cima faz de barra da janela. */
+html { background: var(--bg); }
+body { border: 1px solid #3c2d10; }
+body.maximized { border-color: transparent; }
+/* filete dourado no topo da janela */
+body::before {
+  content: ''; position: fixed; left: 0; right: 0; top: 0; height: 2px; z-index: 60; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, #785a28 18%, #c8aa6e 50%, #785a28 82%, transparent 100%);
+}
+.topbar { position: relative; padding-right: 0; user-select: none; -webkit-user-select: none; cursor: default; }
+.topbar::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(200,170,110,.55) 30%, rgba(200,170,110,.55) 70%, transparent);
+}
+.logo span { display: block; transform: rotate(-45deg); }
+
+.winctl { align-self: flex-start; display: flex; margin: -10px 0 0 6px; }
+.wc {
+  position: relative; width: 42px; height: 30px; display: grid; place-items: center;
+  background: transparent; border: none; color: #a09b8c; transition: color .12s, background-color .12s;
+}
+.wc svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: square; }
+.wc:hover { color: var(--gold-hi); background: linear-gradient(180deg, rgba(200,170,110,.22), rgba(200,170,110,.04)); }
+.wc:hover::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 1px; background: var(--gold); }
+.wc:active { background: rgba(200,170,110,.3); }
+.wc.close:hover { color: #fff; background: linear-gradient(180deg, #b3283b, #6d1220); }
+.wc.close:hover::after { background: #ff8a98; }
+.wc .i-restore { display: none; }
+body.maximized .wc .i-max { display: none; }
+body.maximized .wc .i-restore { display: block; }
+
+.fatal { position: fixed; inset: 60px 20px auto; padding: 12px; color: var(--bad); background: #12070a; border: 1px solid var(--enemy); white-space: pre-wrap; z-index: 100; }
+
+/* barras de deslocação discretas, douradas */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e2d3d; border: 2px solid var(--bg); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--line-gold); }
+::-webkit-scrollbar-corner { background: transparent; }

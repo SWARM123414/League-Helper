@@ -1,7 +1,7 @@
 // Modo demonstração: simula o cliente do LoL para veres a app sem estar a jogar.
 // Arranca com:  npm run demo
 
-const CHAMPS = [
+export const CHAMPS: [number, string][] = [
   [266, 'Aatrox'], [103, 'Ahri'], [84, 'Akali'], [22, 'Ashe'], [432, 'Bard'], [51, 'Caitlyn'], [122, 'Darius'],
   [81, 'Ezreal'], [114, 'Fiora'], [104, 'Graves'], [39, 'Irelia'], [59, 'Jarvan IV'], [222, 'Jinx'], [145, "Kai'Sa"],
   [64, 'Lee Sin'], [99, 'Lux'], [21, 'Miss Fortune'], [25, 'Morgana'], [111, 'Nautilus'], [157, 'Yasuo'], [238, 'Zed'],
@@ -9,14 +9,15 @@ const CHAMPS = [
   [876, 'Lillia'], [517, 'Sylas'], [360, 'Samira'], [497, 'Rakan'], [498, 'Xayah'], [86, 'Garen'], [24, 'Jax']
 ];
 
-const { ARCH, CHAMP_ARCH } = require('./demo-static');
+import { ARCH, CHAMP_ARCH } from './demo-static.ts';
+import type { LcuLike } from './lcu.ts';
 
 let seed = 42;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+const pick = <T>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
 
 const ME = 'puuid-me';
-const PLAYERS = [
+const PLAYERS: any[] = [
   // aliados
   { puuid: 'a1', name: 'TopDiffKing', tag: 'EUW', champ: 266, pos: 'TOP', tier: 'GOLD', div: 'I', lp: 67, w: 88, l: 80, lvl: 212, main: 0.3, form: 0.52 },
   { puuid: 'a2', name: 'Selva Escura', tag: 'PT1', champ: 64, pos: 'JUNGLE', tier: 'PLATINUM', div: 'IV', lp: 12, w: 50, l: 41, lvl: 340, main: 0.55, form: 0.6, spells: [11, 4] },
@@ -31,8 +32,8 @@ const PLAYERS = [
   { puuid: 'e5', name: 'HookCity', tag: 'EUW', champ: 111, pos: 'UTILITY', tier: 'GOLD', div: 'IV', lp: 40, w: 52, l: 50, lvl: 175, main: 0.45, form: 0.5, duo: 'x' }
 ];
 
-function makeHistory(p, sharedIds) {
-  const games = [];
+function makeHistory(p: any, sharedIds: number[] | null) {
+  const games: any[] = [];
   const now = Date.now();
   for (let i = 0; i < 20; i++) {
     let win = rnd() < p.form;
@@ -46,9 +47,9 @@ function makeHistory(p, sharedIds) {
     const gameId = sharedIds && i < 6 ? sharedIds[i] : 7000000000 + Math.floor(rnd() * 1e8);
     const ar = ARCH[CHAMP_ARCH[champ] || 'bruiser'];
     const its = [...ar.items].sort(() => rnd() - 0.5).slice(0, 3 + Math.floor(rnd() * 3));
-    const itemStats = {};
+    const itemStats: Record<string, number> = {};
     [...its, ar.boots[0], 3340].forEach((id, k) => { itemStats['item' + k] = id; });
-    const perkStats = { perkPrimaryStyle: ar.page.primary, perkSubStyle: ar.page.sub };
+    const perkStats: Record<string, number> = { perkPrimaryStyle: ar.page.primary, perkSubStyle: ar.page.sub };
     ar.page.perks.forEach((id, k) => { perkStats['perk' + k] = id; });
     games.push({
       gameId, gameCreation: now - i * 3600 * 1000 * 5, gameDuration: 1500 + Math.floor(rnd() * 900), queueId: 420, gameMode: 'CLASSIC',
@@ -64,17 +65,17 @@ function makeHistory(p, sharedIds) {
 }
 
 const duoIds = Array.from({ length: 6 }, (_, i) => 6900000000 + i);
-const HIST = {};
+const HIST: Record<string, any> = {};
 for (const p of PLAYERS) HIST[p.puuid] = makeHistory(p, p.duo ? duoIds : null);
 
 // ---- ranking Challenger falso, para o motor de builds ----
-const HI = {};      // puuid -> history
-const HI_GAMES = {}; // gameId -> {puuid, champ, arch, win}
+const HI: Record<string, any> = {};      // puuid -> history
+const HI_GAMES: Record<string, any> = {}; // gameId -> {puuid, champ, arch, win}
 let hiGame = 8000000000;
 for (let n = 0; n < 40; n++) {
   const puuid = `hi-${n}`;
   const pool = [pick(CHAMPS)[0], pick(CHAMPS)[0], 103, 157];
-  const games = [];
+  const games: any[] = [];
   for (let i = 0; i < 20; i++) {
     const champ = pick(pool);
     const archName = CHAMP_ARCH[champ] || 'bruiser';
@@ -83,7 +84,7 @@ for (let n = 0; n < 40; n++) {
     // variação: às vezes trocam o 3.º item / usam outra página
     const its = [...ar.items.slice(0, 2), ...ar.items.slice(2).sort(() => rnd() - 0.5)].slice(0, 4 + Math.floor(rnd() * 2));
     const boots = ar.boots[rnd() < 0.75 ? 0 : ar.boots.length - 1];
-    const stats = { win, kills: 6, deaths: 3, assists: 7, totalMinionsKilled: 200, neutralMinionsKilled: 0, perkPrimaryStyle: ar.page.primary, perkSubStyle: ar.page.sub,
+    const stats: Record<string, any> = { win, kills: 6, deaths: 3, assists: 7, totalMinionsKilled: 200, neutralMinionsKilled: 0, perkPrimaryStyle: ar.page.primary, perkSubStyle: ar.page.sub,
       statPerk0: ar.page.shards[0], statPerk1: ar.page.shards[1], statPerk2: ar.page.shards[2] };
     [...its, boots, 3364].forEach((id, k) => { stats['item' + k] = id; });
     const perks = [...ar.page.perks];
@@ -101,13 +102,14 @@ for (let n = 0; n < 40; n++) {
   HI[puuid] = { games: { games } };
 }
 
-class DemoLCU {
-  constructor() {
-    this.connected = false; this.customDir = null; this.t0 = Date.now();
-    this.perkPages = [{ id: 1, name: 'Página 1', isDeletable: true, isEditable: true, current: true }];
-    this.pageSeq = 100;
-    this.itemSets = { accountId: 1, itemSets: [], timestamp: 0 };
-  }
+export class DemoLCU implements LcuLike {
+  connected = false;
+  customDir: string | null = null;
+  creds = null;
+  t0 = Date.now();
+  perkPages: any[] = [{ id: 1, name: 'Página 1', isDeletable: true, isEditable: true, current: true }];
+  pageSeq = 100;
+  itemSets: any = { accountId: 1, itemSets: [], timestamp: 0 };
   async connect() { this.connected = true; return true; }
   disconnect() { this.connected = false; }
   elapsed() { return (Date.now() - this.t0) / 1000; }
@@ -118,11 +120,11 @@ class DemoLCU {
     if (t < 20) return 'ChampSelect';
     return 'InProgress';
   }
-  async safeGet(p, fb = null) { try { return await this.get(p); } catch { return fb; } }
-  async post(path, body) {
+  async safeGet(p: string, fb: any = null): Promise<any> { try { return await this.get(p); } catch { return fb; } }
+  async post(path: string, body?: any): Promise<any> {
     if (path === '/lol-perks/v1/pages') {
       // como no cliente real: erro se não houver páginas livres
-      if (this.perkPages.filter((p) => p.isDeletable).length >= 3) { const e = new Error('HTTP 400 em /lol-perks/v1/pages — Max pages reached'); e.status = 400; throw e; }
+      if (this.perkPages.filter((p) => p.isDeletable).length >= 3) { const e: any = new Error('HTTP 400 em /lol-perks/v1/pages — Max pages reached'); e.status = 400; throw e; }
       const page = { id: ++this.pageSeq, isDeletable: true, isEditable: true, ...body };
       this.perkPages.forEach((p) => { p.current = false; });
       this.perkPages.push(page);
@@ -130,15 +132,15 @@ class DemoLCU {
     }
     return {};
   }
-  async put(path, body) {
+  async put(path: string, body?: any): Promise<any> {
     if (path.includes('/lol-item-sets/')) this.itemSets = body;
     const m = /^\/lol-perks\/v1\/pages\/(\d+)$/.exec(path);
     if (m) { const i = this.perkPages.findIndex((p) => p.id === Number(m[1])); if (i >= 0) this.perkPages[i] = { ...this.perkPages[i], ...body }; }
     if (path === '/lol-perks/v1/currentpage') this.perkPages.forEach((p) => { p.current = p.id === body; });
     return {};
   }
-  async del(path) { const id = Number(path.split('/').pop()); this.perkPages = this.perkPages.filter((p) => p.id !== id); return {}; }
-  async get(path) {
+  async del(path: string): Promise<any> { const id = Number(path.split('/').pop()); this.perkPages = this.perkPages.filter((p) => p.id !== id); return {}; }
+  async get(path: string): Promise<any> {
     const P = (id) => PLAYERS.find((x) => x.puuid === id);
     if (path === '/lol-summoner/v1/current-summoner') return { puuid: ME, gameName: 'Alex', tagLine: 'PT1', summonerLevel: 287, profileIconId: 29, summonerId: 1 };
     if (path === '/riotclient/region-locale') return { region: 'EUW', webRegion: 'euw' };
@@ -166,7 +168,7 @@ class DemoLCU {
     if (hm && HI_GAMES[hm[1]]) {
       const g = HI_GAMES[hm[1]];
       const ar = ARCH[g.arch];
-      const ev = [];
+      const ev: any[] = [];
       ar.start.forEach((id) => ev.push({ type: 'ITEM_PURCHASED', participantId: 3, itemId: id, timestamp: 15000 }));
       ev.push({ type: 'ITEM_PURCHASED', participantId: 3, itemId: 3340, timestamp: 15000 });
       ev.push({ type: 'ITEM_PURCHASED', participantId: 1, itemId: 3157, timestamp: 16000 });
@@ -217,7 +219,7 @@ class DemoLCU {
   }
 }
 
-function demoLive(lcu) {
+export function demoLive(lcu: DemoLCU) {
   return async () => {
     const t = lcu.elapsed() - 20;
     if (t < 0) return null;
@@ -234,5 +236,3 @@ function demoLive(lcu) {
     };
   };
 }
-
-module.exports = { DemoLCU, demoLive, CHAMPS };
