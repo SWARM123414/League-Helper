@@ -31,19 +31,80 @@ The reasons:
 - **Rust only where it matters.** The native side is small: HTTPS to the League client on `127.0.0.1` (Riot's self-signed certificate is accepted only for local connections), the process lookup, data files, windows, tray, hotkey and start-with-Windows. Everything else (tracker, player analysis, builds, interface) is **TypeScript**, so the logic stays easy to change and is tested without needing League open.
 - **Why not C# or a fully native Rust UI?** They would save a little more memory, but meant rewriting the whole interface. Tauri kept the existing HTML/CSS interface and got most of the gain.
 
-## Running and building
+## Installing (just using the app)
 
-You need **Node.js** 18+ and **Rust** (with the "Desktop development with C++" tools from Visual Studio).
+Run `LoL Scout_2.0.0_x64-setup.exe`. It installs for your Windows user only (no admin needed) and adds a Start menu shortcut.
 
+- **Windows 10 or 11, 64-bit.** The app uses Microsoft Edge **WebView2**, which comes with Windows 11 and with up-to-date Windows 10. If it's missing, the installer downloads it (needs internet).
+- Windows may show **"Windows protected your PC"** because the installer isn't signed. Click **More info → Run anyway**.
+- Nothing else is needed to *run* the app. Node, Rust and Visual Studio are only needed to *build* it.
+
+## Building from source
+
+### 1. Install the tools (once)
+
+| Tool | Version | Why | Where |
+|---|---|---|---|
+| **Node.js** | 22.18 or newer (the current LTS is fine) | Builds the interface (Vite + TypeScript) and runs the tests | https://nodejs.org |
+| **Rust** (via rustup) | stable, toolchain `x86_64-pc-windows-msvc` (the default on Windows) | Compiles the native side | https://rustup.rs |
+| **Visual Studio Build Tools** (or Visual Studio Community) | 2022 or newer, workload **"Desktop development with C++"** | Rust on Windows uses Microsoft's C++ linker (`link.exe`) and the Windows SDK | https://visualstudio.microsoft.com/visual-cpp-build-tools/ |
+
+Notes:
+
+- In the Visual Studio Installer, tick **"Desktop development with C++"**. Its defaults (MSVC build tools + a Windows 10/11 SDK) are what's needed. You don't need the full IDE.
+- Install the C++ tools **before or right after** Rust. If rustup asks about them during setup, let it continue and install them afterwards.
+- **Make sure Rust is on your PATH.** rustup puts `cargo` in `%USERPROFILE%\.cargo\bin` and normally adds that folder to your PATH. Check in a **new** terminal:
+
+  ```powershell
+  cargo --version
+  rustc --version
+  node --version
+  ```
+
+  If `cargo` isn't found, add the folder to your user PATH (once), then **open a new terminal / restart VS Code**:
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ";$env:USERPROFILE\.cargo\bin", 'User')
+  ```
+
+  Or, just for the terminal you have open: `$env:Path += ";$env:USERPROFILE\.cargo\bin"`
+
+- You need **internet** for the first build (npm packages, Rust crates, and the NSIS installer tool, which Tauri downloads automatically) and about **4–6 GB** of free disk space for Rust's build folder (`src-tauri/target`).
+
+### 2. Build
+
+In the project folder:
+
+```powershell
+npm install       # once (and after pulling changes to package.json)
+npm run dist      # builds the installer
 ```
-npm install
-npm test          # engine tests (no League client needed)
-npm start         # dev build connected to your League client
-npm run demo      # dev build with a simulated match
-npm run dist      # installer -> src-tauri/target/release/bundle/nsis/
+
+The installer ends up at `src-tauri\target\release\bundle\nsis\LoL Scout_2.0.0_x64-setup.exe`, and the plain executable at `src-tauri\target\release\lol-scout.exe`.
+
+The **first build takes about 3–5 minutes** (it compiles all the Rust dependencies). Later builds take about 1–2 minutes.
+
+### Other commands
+
+```powershell
+npm test          # engine tests (Node only, no Rust or League client needed)
+npm run typecheck # TypeScript check
+npm start         # dev build connected to your League client (live-reloads the interface)
+npm run demo      # dev build with a simulated match, to see the app without playing
 ```
 
-The installed app also accepts `--demo` (simulated match) and `--hidden` (start in the tray).
+The app (dev or installed) also accepts `--demo` (simulated match) and `--hidden` (start in the tray), e.g. `lol-scout.exe --demo`.
+
+### Troubleshooting the build
+
+| Error | Fix |
+|---|---|
+| `failed to run 'cargo metadata' ... program not found` | Rust isn't on your PATH: see the PATH step above, then open a new terminal. |
+| `linker 'link.exe' not found` / `error: linking with link.exe failed` / missing `kernel32.lib` | The C++ tools or Windows SDK are missing: install **"Desktop development with C++"** in the Visual Studio Installer. |
+| `npm : ... running scripts is disabled on this system` (PowerShell) | Use `npm.cmd install` / `npm.cmd run dist`, or run the commands from **cmd** instead of PowerShell. |
+| `Port 1420 is already in use` (on `npm start` / `npm run demo`) | An old dev server is still running: close the other terminal or end the `node.exe` running Vite in Task Manager. |
+| `Unsupported engine` / Vite or test errors about Node | Update Node.js to 22.18 or newer. |
+| The build hangs at "Downloading NSIS" | It needs access to github.com the first time. Check your internet or firewall. |
 
 ## Notes
 
